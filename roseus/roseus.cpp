@@ -871,6 +871,7 @@ pointer ROSEUS_CONSOLE_BRIDGE_SET_LOG_LEVEL(register context *ctx,int n,pointer 
     break;
   case 3:
     level = console_bridge::CONSOLE_BRIDGE_LOG_ERROR;
+    break;
   default:
     return (NIL);
   }
