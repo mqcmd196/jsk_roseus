@@ -14,7 +14,7 @@ generate_messages(
 
 catkin_package(
 #    DEPENDS 
-    CATKIN_DEPENDS euslisp roseus smach smach_ros smach_msgs # TODO
+    CATKIN_DEPENDS roseus smach smach_ros smach_msgs # TODO
 #    INCLUDE_DIRS # TODO include
 #    LIBRARIES # TODO
 )
@@ -32,5 +32,6 @@ if(CATKIN_ENABLE_TESTING)
   add_rostest(test/test_roseus_smach_utils.test)
   add_rostest(test/test_async_join_state_machine_actionlib.test)
   add_rostest(test/test_parallel_state_machine_sample.test)
+  add_rostest(test/test_unpickle_userdata.test)
 endif()
 
