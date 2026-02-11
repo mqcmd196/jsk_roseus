@@ -1,3 +1,39 @@
+if($ENV{ROS_VERSION} EQUAL 2)
+cmake_minimum_required(VERSION 3.8)
+project(roseus)
+
+find_package(ament_cmake_auto REQUIRED)
+
+ament_auto_find_build_dependencies()
+
+set(ENV_EUSDIR $ENV{EUSDIR})
+if(ENV_EUSDIR)
+  set(EUSDIR $ENV_EUSDIR)
+else()
+  set(EUSDIR /usr/share/euslisp) # for debian/ubuntu default package
+endif()
+
+if(EXISTS ${EUSDIR})
+  message(STATUS "Found EusLisp: ${EUSDIR}")
+else()
+  message(FATAL_ERROR "EusLisp not found")
+endif()
+set(euslisp_INCLUDE_DIRS ${EUSDIR}/include)
+
+ament_auto_add_library(roseus SHARED roseus2.cpp)
+
+target_compile_options(roseus
+  PRIVATE -O2 -DNDEBUG -DLinux -D_REENTRANT -DTHREADED -DPTHREAD -DX11R6_1 -Dx86_64 -Wno-comment)
+target_include_directories(roseus PUBLIC ${euslisp_INCLUDE_DIRS})
+
+if(BUILD_TESTING)
+  # TODO
+endif()
+
+ament_auto_package()
+
+else() # if($ENV{ROS_VERSION} EQUAL 2)
+
 # http://ros.org/doc/groovy/api/catkin/html/user_guide/supposed.html
 cmake_minimum_required(VERSION 2.8.3)
 project(roseus)
@@ -222,3 +258,4 @@ if(CATKIN_ENABLE_TESTING)
   add_rostest(test/test-compile-message.test)
   add_rostest(test/test-print-ros-msg.test)
 endif()
+endif() # if($ENV{ROS_VERSION} EQUAL 2)
