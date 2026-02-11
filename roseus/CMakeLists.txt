@@ -26,11 +26,45 @@ target_compile_options(roseus
   PRIVATE -O2 -DNDEBUG -DLinux -D_REENTRANT -DTHREADED -DPTHREAD -DX11R6_1 -Dx86_64 -Wno-comment)
 target_include_directories(roseus PUBLIC ${euslisp_INCLUDE_DIRS})
 
+# Generate ROS 2 interfaces from .msg/.srv files
+# Use ${PROJECT_NAME}_interfaces to avoid target name conflict with the roseus library
+# TestFixedArray/TestVariableArray are ROS 2 versions of FixedArray/VariableArray
+# (replacing ROS 1 'time'/'duration' with builtin_interfaces equivalents)
+rosidl_generate_interfaces(${PROJECT_NAME}_interfaces
+  msg/String.msg
+  msg/StringStamped2.msg
+  msg/TestFixedArray.msg
+  msg/TestVariableArray.msg
+  msg/TestName2.msg
+  srv/AddTwoInts.srv
+  srv/StringString.srv
+  DEPENDENCIES std_msgs builtin_interfaces
+)
+
 if(BUILD_TESTING)
-  # TODO
+  find_program(EUS_EXECUTABLE eus)
+  if(EUS_EXECUTABLE)
+    set(_test_eus_l_dir "${CMAKE_CURRENT_BINARY_DIR}/rosidl_generator_eus/${PROJECT_NAME}")
+    add_test(
+      NAME test_rosidl_generator_eus
+      COMMAND ${EUS_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/test-rosidl-generator-eus.l
+        ${_test_eus_l_dir}
+    )
+  endif()
 endif()
 
-ament_auto_package()
+# Generate .l files for dependency message packages (std_msgs, etc.)
+# This must be included before ament_auto_package() because the
+# ament_package hook in CONFIG_EXTRAS only takes effect for downstream packages.
+include(cmake/roseus_generate_dep_msgs.cmake)
+
+install(FILES
+  cmake/roseus_generate_dep_msgs.cmake
+  DESTINATION share/${PROJECT_NAME}/cmake/
+)
+
+ament_auto_package(CONFIG_EXTRAS cmake/roseus-extras.cmake.in)
 
 else() # if($ENV{ROS_VERSION} EQUAL 2)
 
