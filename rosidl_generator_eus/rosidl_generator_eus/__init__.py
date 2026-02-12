@@ -696,7 +696,11 @@ def _write_deserialize_field(s, f):
 
 
 def _write_deserialize(s, fields):
-    """Write :deserialize method."""
+    """Write :deserialize method.
+
+    Note: does NOT close the (defmethod ...) form.
+    The closing ) is written by _write_deserialize_cdr().
+    """
     with Indent(s):
         s.write('(:deserialize')
         with Indent(s, inc=1):
@@ -705,8 +709,6 @@ def _write_deserialize(s, fields):
                 _write_deserialize_field(s, f)
             s.write(';;')
             s.write('self)')
-        s.write(')')
-        s.newline()
 
 
 # -- Serialization length --
@@ -785,6 +787,419 @@ def _write_serialization_length(s, fields):
                 s.write('))')
 
 
+# ============================================================
+# CDR serialization helpers
+# ============================================================
+
+def _cdr_alignment(f):
+    """Return the CDR alignment value for a field's element type."""
+    if not f.is_builtin:
+        return 4  # struct alignment
+    bt = f.base_type
+    if bt in ('int8', 'uint8', 'octet', 'char', 'boolean'):
+        return 1
+    elif bt in ('int16', 'uint16', 'wchar', 'short', 'unsigned short'):
+        return 2
+    elif bt in ('int32', 'uint32', 'float', 'long', 'unsigned long',
+                'string'):
+        return 4  # string length field is uint32
+    elif bt in ('int64', 'uint64', 'double', 'long double',
+                'long long', 'unsigned long long'):
+        return 8
+    return 1
+
+
+def _write_cdr_align_serialize(s, align):
+    """Write CDR alignment padding for serialize (stream-based)."""
+    if align <= 1:
+        return
+    # Subtract 4 for the CDR header that was written at the start
+    s.write(
+        f'(let ((pad (logand (- {align}'
+        f' (logand (- (stream-count s) 4) {align - 1}))'
+        f' {align - 1})))')
+    s.write(f'  (dotimes (_ pad) (write-byte 0 s)))')
+
+
+def _write_cdr_align_deserialize(s, align):
+    """Write CDR alignment for deserialize (advance ptr-)."""
+    if align <= 1:
+        return
+    s.write(
+        f'(setq ptr- (logand (+ ptr- {align - 1})'
+        f' (lognot {align - 1})))')
+
+
+def _write_serialize_cdr_builtin(s, f, v):
+    """Write CDR serialization for a single builtin value."""
+    if _is_string(f.base_type):
+        # CDR string: length includes null terminator
+        s.write(f'(write-long (1+ (length {v})) s)')
+        s.write(f'(princ {v} s)')
+        s.write('(write-byte 0 s)')
+    elif f.base_type == 'float':
+        s.write(
+            f'(sys::poke {v} (send s :buffer)'
+            f' (send s :count) :float)'
+            f' (incf (stream-count s) 4)')
+    elif f.base_type in ('double', 'long double'):
+        s.write(
+            f'(sys::poke {v} (send s :buffer)'
+            f' (send s :count) :double)'
+            f' (incf (stream-count s) 8)')
+    elif _is_bool(f.base_type):
+        # CDR boolean: true=0x01 (not 0xFF)
+        s.write(f'(if {v} (write-byte 1 s) (write-byte 0 s))')
+    elif f.base_type in ('octet', 'char'):
+        s.write(f'(write-byte {v} s)')
+    elif _is_signed_int(f.base_type) or _is_unsigned_int(f.base_type):
+        _write_serialize_bits(s, v, NUM_BYTES[f.base_type])
+    else:
+        raise ValueError(f'Unknown type: {f.base_type}')
+
+
+def _write_serialize_cdr_field(s, f):
+    """Write CDR serialization for a single field."""
+    s.write(f';; {f.type_str} _{f.name}')
+    slot = f'_{f.name}'
+    var = slot
+
+    if f.is_array and f.base_type in ('uint8', 'octet', 'char'):
+        # byte array: length prefix for dynamic, then raw bytes
+        align = 4 if not f.array_len else _cdr_alignment(f)
+        _write_cdr_align_serialize(s, align)
+        if not f.array_len:
+            s.write(f'(write-long (length {slot}) s)')
+        s.write(f'(princ {slot} s)')
+    elif f.is_array and _is_string(f.base_type):
+        _write_cdr_align_serialize(s, 4)
+        s.write(f'(write-long (length {slot}) s)')
+        s.write(f'(dolist (elem {slot})')
+        with Indent(s):
+            _write_cdr_align_serialize(s, 4)
+            _write_serialize_cdr_builtin(s, f, 'elem')
+        s.write('  )')
+    elif f.is_array:
+        if not f.array_len:
+            _write_cdr_align_serialize(s, 4)
+            s.write(f'(write-long (length {slot}) s)')
+        if f.is_builtin:
+            align = _cdr_alignment(f)
+            _write_cdr_align_serialize(s, align)
+            if f.array_len:
+                s.write(f'(dotimes (i {f.array_len})')
+            else:
+                s.write(f'(dotimes (i (length {var}))')
+            var = f'(elt {var} i)'
+            with Indent(s):
+                _write_serialize_cdr_builtin(s, f, var)
+            s.write('  )')
+        else:
+            s.write(f'(dolist (elem {slot})')
+            with Indent(s):
+                _write_cdr_align_serialize(s, 4)
+                s.write(f'(send elem :serialize-cdr s)')
+            s.write('  )')
+    elif f.is_builtin:
+        align = _cdr_alignment(f)
+        _write_cdr_align_serialize(s, align)
+        _write_serialize_cdr_builtin(s, f, var)
+    else:
+        _write_cdr_align_serialize(s, 4)
+        s.write(f'(send {slot} :serialize-cdr s)')
+
+
+def _write_serialize_cdr(s, fields):
+    """Write :serialize-cdr method."""
+    with Indent(s):
+        s.write('(:serialize-cdr')
+        with Indent(s, inc=1):
+            s.write('(&optional strm)')
+            s.write('(let ((s (if strm strm')
+            s.write(
+                '           (make-string-output-stream'
+                ' (send self :serialization-length-cdr)))))')
+            with Indent(s):
+                # Write CDR header: [0x00, 0x01, 0x00, 0x00]
+                s.write(';; CDR Header (4 bytes)')
+                s.write('(write-byte 0 s)')
+                s.write('(write-byte 1 s)')
+                s.write('(write-byte 0 s)')
+                s.write('(write-byte 0 s)')
+                for f in fields:
+                    _write_serialize_cdr_field(s, f)
+                s.write(';;')
+                s.write(
+                    '(if (null strm)'
+                    ' (get-output-stream-string s))))')
+
+
+def _write_deserialize_cdr_builtin(s, f, v):
+    """Write CDR deserialization for a single builtin value."""
+    setter = 'setf' if v[0] == '(' else 'setq'
+    if _is_string(f.base_type):
+        # CDR string: length includes null, read len-1 chars, skip null
+        s.write(
+            f'(let ((n (sys::peek buf ptr- :integer))) (incf ptr- 4)')
+        s.write(
+            f'  ({setter} {v}'
+            f' (subseq buf ptr- (+ ptr- (1- n)))) (incf ptr- n))')
+    elif f.base_type == 'float':
+        s.write(
+            f'({setter} {v} (sys::peek buf ptr- :float))'
+            f' (incf ptr- 4)')
+    elif f.base_type in ('double', 'long double'):
+        s.write(
+            f'({setter} {v} (sys::peek buf ptr- :double))'
+            f' (incf ptr- 8)')
+    elif _is_bool(f.base_type):
+        # CDR boolean: 0x01 = true
+        s.write(
+            f'({setter} {v}'
+            f' (not (= 0 (sys::peek buf ptr- :char))))'
+            f' (incf ptr- 1)')
+    elif f.base_type in ('octet', 'char'):
+        s.write(
+            f'({setter} {v} (sys::peek buf ptr- :char))'
+            f' (incf ptr- 1)')
+    elif _is_signed_int(f.base_type):
+        _write_deserialize_bits_signed(s, v, NUM_BYTES[f.base_type])
+        if NUM_BYTES[f.base_type] == 1:
+            s.write(
+                f'(if (> {v} 127)'
+                f' ({setter} {v} (- {v} 256)))')
+    elif _is_unsigned_int(f.base_type):
+        _write_deserialize_bits(s, v, NUM_BYTES[f.base_type])
+    else:
+        raise ValueError(f'{f.base_type} unknown')
+
+
+def _write_deserialize_cdr_field(s, f):
+    """Write CDR deserialization for a single field."""
+    var = f'_{f.name}'
+    s.write(f';; {f.type_str} {var}')
+
+    if f.is_array:
+        if f.is_builtin:
+            if f.base_type in ('uint8', 'octet', 'char'):
+                if f.array_len:
+                    _write_cdr_align_deserialize(
+                        s, _cdr_alignment(f))
+                    s.write(
+                        f'(setq {var}'
+                        f' (make-array {f.array_len}'
+                        f' :element-type :char))')
+                    s.write(
+                        f'(replace {var} buf :start2 ptr-)'
+                        f' (incf ptr- {f.array_len})')
+                else:
+                    _write_cdr_align_deserialize(s, 4)
+                    s.write(
+                        '(let ((n (sys::peek buf ptr- :integer)))'
+                        ' (incf ptr- 4)')
+                    s.write(
+                        f'  (setq {var}'
+                        f' (make-array n :element-type :char))')
+                    s.write(
+                        f'  (replace {var} buf :start2 ptr-)'
+                        f' (incf ptr- n))')
+            elif _is_string(f.base_type):
+                _write_cdr_align_deserialize(s, 4)
+                s.write(
+                    '(let ((n (sys::peek buf ptr- :integer)))'
+                    ' (incf ptr- 4)')
+                s.write(f'  (setq {var} (make-list n))')
+                s.write('  (dotimes (i n)')
+                with Indent(s, inc=2):
+                    _write_cdr_align_deserialize(s, 4)
+                    _write_deserialize_cdr_builtin(
+                        s, f, f'(elt {var} i)')
+                s.write('  ))')
+            elif f.array_len:
+                _write_cdr_align_deserialize(
+                    s, _cdr_alignment(f))
+                s.write(f'(dotimes (i (length {var}))')
+                with Indent(s):
+                    _write_deserialize_cdr_builtin(
+                        s, f, f'(elt {var} i)')
+                s.write('  )')
+            else:
+                # dynamic array of primitives
+                _write_cdr_align_deserialize(s, 4)
+                bt = f.base_type
+                s.write('(let (n)')
+                with Indent(s):
+                    s.write(
+                        '(setq n (sys::peek buf ptr- :integer))'
+                        ' (incf ptr- 4)')
+                    if _is_bool(bt):
+                        s.write(f'(setq {var} (make-list n))')
+                    else:
+                        lt = _lisp_type(bt, True)
+                        s.write(
+                            f'(setq {var}'
+                            f' (instantiate {lt}-vector n))')
+                    _write_cdr_align_deserialize(
+                        s, _cdr_alignment(f))
+                    s.write('(dotimes (i n)')
+                    with Indent(s):
+                        _write_deserialize_cdr_builtin(
+                            s, f, f'(elt {var} i)')
+                    s.write('))')
+        else:
+            # array of non-builtin (messages)
+            if f.array_len:
+                s.write(f'(dotimes (i {f.array_len})')
+                with Indent(s):
+                    _write_cdr_align_deserialize(s, 4)
+                    s.write(
+                        f'(send (elt _{f.name} i)'
+                        f' :deserialize-cdr buf ptr-)')
+                    s.write(
+                        f'(incf ptr- (- (send (elt _{f.name} i)'
+                        f' :serialization-length-cdr) 4))')
+                s.write('  )')
+            else:
+                _write_cdr_align_deserialize(s, 4)
+                ft = _field_type(f)
+                s.write('(let (n)')
+                with Indent(s):
+                    s.write(
+                        '(setq n (sys::peek buf ptr- :integer))'
+                        ' (incf ptr- 4)')
+                    s.write(
+                        f'(setq {var} (let (r) (dotimes (i n)'
+                        f' (push (instance {ft} :init) r)) r))')
+                    s.write(f'(dolist (elem- {var})')
+                    with Indent(s):
+                        _write_cdr_align_deserialize(s, 4)
+                        s.write(
+                            '(send elem- :deserialize-cdr buf ptr-)')
+                        s.write(
+                            '(incf ptr- (- (send elem-'
+                            ' :serialization-length-cdr) 4))')
+                    s.write('))')
+    elif f.is_builtin:
+        align = _cdr_alignment(f)
+        _write_cdr_align_deserialize(s, align)
+        _write_deserialize_cdr_builtin(s, f, var)
+    else:
+        _write_cdr_align_deserialize(s, 4)
+        s.write(
+            f'(send {var} :deserialize-cdr buf ptr-)')
+        s.write(
+            f'(incf ptr- (- (send {var}'
+            f' :serialization-length-cdr) 4))')
+
+
+def _write_deserialize_cdr(s, fields):
+    """Write :deserialize-cdr method."""
+    with Indent(s):
+        s.write('(:deserialize-cdr')
+        with Indent(s, inc=1):
+            s.write('(buf &optional (ptr- 0))')
+            # Skip CDR header (4 bytes)
+            s.write(';; skip CDR header 4 bytes')
+            s.write('(incf ptr- 4)')
+            for f in fields:
+                _write_deserialize_cdr_field(s, f)
+            s.write(';;')
+            s.write('self)')
+        s.write(')')
+        s.newline()
+
+
+def _write_cdr_builtin_length(s, f):
+    """Write the CDR byte size contribution for a builtin field."""
+    bt = f.base_type
+    if bt in ('int8', 'uint8', 'octet', 'char', 'boolean'):
+        s.write('1')
+    elif bt in ('int16', 'uint16', 'wchar', 'short', 'unsigned short'):
+        s.write('2')
+    elif bt in ('int32', 'uint32', 'float', 'long', 'unsigned long'):
+        s.write('4')
+    elif bt in ('int64', 'uint64', 'double', 'long double',
+                'long long', 'unsigned long long'):
+        s.write('8')
+    elif _is_string(bt):
+        # CDR string: 4-byte length + chars + 1 null byte
+        s.write(f'4 (length _{f.name}) 1')
+    else:
+        raise ValueError(f'Unknown: {bt}')
+
+
+def _write_serialization_length_cdr(s, fields):
+    """Write :serialization-length-cdr method.
+
+    CDR serialization length includes:
+    - 4-byte CDR header
+    - Alignment padding (worst case estimated)
+    - Field data
+    """
+    with Indent(s):
+        s.write('(:serialization-length-cdr')
+        with Indent(s, inc=1):
+            s.write('()')
+            s.write('(+')
+            with Indent(s, 1):
+                # CDR header is always 4 bytes
+                s.write('4  ;; CDR header')
+                if not fields:
+                    s.write('0')
+                for f in fields:
+                    s.write(f';; {f.type_str} _{f.name}')
+                    align = _cdr_alignment(f)
+                    if align > 1:
+                        s.write(
+                            f'{align - 1}  ;; max alignment padding')
+
+                    if f.is_array:
+                        if (f.is_builtin
+                                and not _is_string(f.base_type)):
+                            s.write('(* ')
+                        else:
+                            s.write('(apply #\'+ ')
+                        s.block_next_indent()
+
+                        if f.is_builtin:
+                            if not f.array_len:
+                                if _is_string(f.base_type):
+                                    # Each string: 4 len + chars + 1
+                                    # null + up to 3 align padding
+                                    s.write(
+                                        f'(mapcar #\'(lambda (x)'
+                                        f' (+ 4 (length x) 1 3))'
+                                        f' _{f.name})) 4')
+                                else:
+                                    _write_cdr_builtin_length(s, f)
+                                    s.write(
+                                        f'(length _{f.name})) 4',
+                                        newline=False)
+                            else:
+                                _write_cdr_builtin_length(s, f)
+                                s.write(
+                                    f'{f.array_len})',
+                                    newline=False)
+                        else:
+                            if f.array_len:
+                                s.write(
+                                    f'(send-all _{f.name}'
+                                    f' :serialization-length-cdr))')
+                            else:
+                                s.write(
+                                    f'(send-all _{f.name}'
+                                    f' :serialization-length-cdr)) 4')
+                    else:
+                        if f.is_builtin:
+                            _write_cdr_builtin_length(s, f)
+                        else:
+                            s.write(
+                                f'(send _{f.name}'
+                                f' :serialization-length-cdr)')
+
+                s.write('))')
+
+
 def _write_ros_datatype(s, pkg, name, subfolder):
     """Write :datatype- property (ROS 2 format)."""
     s.write(
@@ -807,6 +1222,9 @@ def _write_msg(s, pkg, name, fields, constants, subfolder='msg'):
     _write_serialization_length(s, fields)
     _write_serialize(s, fields)
     _write_deserialize(s, fields)
+    _write_serialization_length_cdr(s, fields)
+    _write_serialize_cdr(s, fields)
+    _write_deserialize_cdr(s, fields)
     _write_ros_datatype(s, pkg, name, subfolder)
 
 
@@ -819,6 +1237,9 @@ def _write_srv_component(s, pkg, comp_name, fields, constants):
     _write_serialization_length(s, fields)
     _write_serialize(s, fields)
     _write_deserialize(s, fields)
+    _write_serialization_length_cdr(s, fields)
+    _write_serialize_cdr(s, fields)
+    _write_deserialize_cdr(s, fields)
 
 
 def _write_service_specific_methods(s, pkg, srv_name, req_name, res_name):
