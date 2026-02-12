@@ -42,6 +42,18 @@ rosidl_generate_interfaces(${PROJECT_NAME}_interfaces
   DEPENDENCIES std_msgs builtin_interfaces
 )
 
+# Create typesupport symlinks: runtime looks for roseus__* but libraries are roseus_interfaces__*
+# because rosidl_generate_interfaces target is named roseus_interfaces (to avoid name conflict)
+set(_typesupport_suffixes
+  rosidl_generator_c rosidl_typesupport_c rosidl_typesupport_cpp
+  rosidl_typesupport_fastrtps_c rosidl_typesupport_fastrtps_cpp
+  rosidl_typesupport_introspection_c rosidl_typesupport_introspection_cpp)
+foreach(_suffix ${_typesupport_suffixes})
+  install(CODE "execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink
+    lib${PROJECT_NAME}_interfaces__${_suffix}.so
+    \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/lib/lib${PROJECT_NAME}__${_suffix}.so)")
+endforeach()
+
 if(BUILD_TESTING)
   find_program(EUS_EXECUTABLE eus)
   if(EUS_EXECUTABLE)
@@ -52,6 +64,53 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/test/test-rosidl-generator-eus.l
         ${_test_eus_l_dir}
     )
+
+    # Category A: Single-node tests (no modifications needed)
+    add_test(NAME test_compile_message
+      COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-compile-message.l)
+    add_test(NAME test_mark_lock
+      COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-mark-lock-ros2.l)
+    add_test(NAME test_unadvertise_service
+      COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-unadvertise-service.l)
+
+    # Category B: Single-node tests (ROS 2 adapted versions)
+    add_test(NAME test_roseus
+      COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-roseus-ros2.l)
+    add_test(NAME test_nodename
+      COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-nodename-ros2.l test_nodename)
+    add_test(NAME test_nodename_dash
+      COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-nodename-ros2.l test-nodename)
+    add_test(NAME test_namespace_root
+      COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-namespace-ros2.l /)
+    add_test(NAME test_namespace_custom
+      COMMAND bash -c "roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-namespace-ros2.l /ns --ros-args -r __ns:=/ns")
+    add_test(NAME test_parameter
+      COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/param-test-ros2.l)
+    add_test(NAME test_msg_serialize
+      COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-msg-serialize-ros2.l)
+
+    # Category C: Multi-node tests (shell wrappers)
+    add_test(NAME test_talker_listener
+      COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test/test-talker-listener.sh)
+    add_test(NAME test_add_two_ints
+      COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test/test-add-two-ints.sh)
+    add_test(NAME test_add_two_ints_server
+      COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test/test-add-two-ints-server.sh)
+    add_test(NAME test_add_two_ints_server_groupname
+      COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test/test-add-two-ints-server-groupname.sh)
+    add_test(NAME test_service_callback
+      COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test/test-service-callback.sh)
+    add_test(NAME test_multi_queue
+      COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test/test-multi-queue.sh)
+
+    # Timeout settings
+    set_tests_properties(
+      test_add_two_ints test_add_two_ints_server
+      test_add_two_ints_server_groupname test_service_callback
+      PROPERTIES TIMEOUT 120)
+    set_tests_properties(
+      test_mark_lock test_talker_listener test_multi_queue
+      PROPERTIES TIMEOUT 60)
   endif()
 endif()
 
