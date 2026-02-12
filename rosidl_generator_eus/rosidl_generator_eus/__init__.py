@@ -43,6 +43,7 @@ from rosidl_parser.definition import (
     AbstractGenericString,
     AbstractNestedType,
     AbstractSequence,
+    Action,
     Array,
     BasicType,
     BoundedSequence,
@@ -921,12 +922,13 @@ def _write_serialize_cdr(s, fields):
                 '           (make-string-output-stream'
                 ' (send self :serialization-length-cdr)))))')
             with Indent(s):
-                # Write CDR header: [0x00, 0x01, 0x00, 0x00]
-                s.write(';; CDR Header (4 bytes)')
-                s.write('(write-byte 0 s)')
-                s.write('(write-byte 1 s)')
-                s.write('(write-byte 0 s)')
-                s.write('(write-byte 0 s)')
+                # CDR header only at top-level (when strm is nil)
+                s.write(';; CDR Header (4 bytes) - only at top level')
+                s.write('(unless strm')
+                s.write('  (write-byte 0 s)')
+                s.write('  (write-byte 1 s)')
+                s.write('  (write-byte 0 s)')
+                s.write('  (write-byte 0 s))')
                 for f in fields:
                     _write_serialize_cdr_field(s, f)
                 s.write(';;')
@@ -1054,11 +1056,9 @@ def _write_deserialize_cdr_field(s, f):
                 with Indent(s):
                     _write_cdr_align_deserialize(s, 4)
                     s.write(
-                        f'(send (elt _{f.name} i)'
-                        f' :deserialize-cdr buf ptr-)')
-                    s.write(
-                        f'(incf ptr- (- (send (elt _{f.name} i)'
-                        f' :serialization-length-cdr) 4))')
+                        f'(setq ptr-'
+                        f' (send (elt _{f.name} i)'
+                        f' :deserialize-cdr buf ptr-))')
                 s.write('  )')
             else:
                 _write_cdr_align_deserialize(s, 4)
@@ -1075,10 +1075,8 @@ def _write_deserialize_cdr_field(s, f):
                     with Indent(s):
                         _write_cdr_align_deserialize(s, 4)
                         s.write(
-                            '(send elem- :deserialize-cdr buf ptr-)')
-                        s.write(
-                            '(incf ptr- (- (send elem-'
-                            ' :serialization-length-cdr) 4))')
+                            '(setq ptr-'
+                            ' (send elem- :deserialize-cdr buf ptr-))')
                     s.write('))')
     elif f.is_builtin:
         align = _cdr_alignment(f)
@@ -1087,25 +1085,28 @@ def _write_deserialize_cdr_field(s, f):
     else:
         _write_cdr_align_deserialize(s, 4)
         s.write(
-            f'(send {var} :deserialize-cdr buf ptr-)')
-        s.write(
-            f'(incf ptr- (- (send {var}'
-            f' :serialization-length-cdr) 4))')
+            f'(setq ptr-'
+            f' (send {var} :deserialize-cdr buf ptr-))')
 
 
 def _write_deserialize_cdr(s, fields):
-    """Write :deserialize-cdr method."""
+    """Write :deserialize-cdr method.
+
+    Returns ptr- (final position in buffer) so callers can track exact
+    byte consumption.  When called at top level (ptr-=0), skips the
+    4-byte CDR header automatically.
+    """
     with Indent(s):
         s.write('(:deserialize-cdr')
         with Indent(s, inc=1):
             s.write('(buf &optional (ptr- 0))')
-            # Skip CDR header (4 bytes)
-            s.write(';; skip CDR header 4 bytes')
-            s.write('(incf ptr- 4)')
+            # Skip CDR header only at top-level (ptr- = 0)
+            s.write(';; skip CDR header 4 bytes (only at top level)')
+            s.write('(when (= ptr- 0) (incf ptr- 4))')
             for f in fields:
                 _write_deserialize_cdr_field(s, f)
             s.write(';;')
-            s.write('self)')
+            s.write('ptr-)')
         s.write(')')
         s.newline()
 
@@ -1182,21 +1183,27 @@ def _write_serialization_length_cdr(s, fields):
                                     f'{f.array_len})',
                                     newline=False)
                         else:
+                            # Subtract 4*N for CDR headers of nested
+                            # messages (no sub-headers in DDS CDR)
                             if f.array_len:
                                 s.write(
-                                    f'(send-all _{f.name}'
-                                    f' :serialization-length-cdr))')
+                                    f'(- (send-all _{f.name}'
+                                    f' :serialization-length-cdr))'
+                                    f' (* 4 {f.array_len}))')
                             else:
                                 s.write(
-                                    f'(send-all _{f.name}'
-                                    f' :serialization-length-cdr)) 4')
+                                    f'(- (send-all _{f.name}'
+                                    f' :serialization-length-cdr))'
+                                    f' (* 4 (length _{f.name}))) 4')
                     else:
                         if f.is_builtin:
                             _write_cdr_builtin_length(s, f)
                         else:
+                            # Subtract 4 for CDR header: nested messages
+                            # don't have their own CDR header in DDS CDR
                             s.write(
-                                f'(send _{f.name}'
-                                f' :serialization-length-cdr)')
+                                f'(- (send _{f.name}'
+                                f' :serialization-length-cdr) 4)')
 
                 s.write('))')
 
@@ -1288,6 +1295,164 @@ def _write_srv(s, pkg, srv_name, request_msg, response_msg):
     _write_service_specific_methods(s, pkg, srv_name, req_name, res_name)
 
 
+def _write_action(s, pkg, action):
+    """Generate complete .l content for an action.
+
+    An action file contains:
+    - Goal, Result, Feedback message classes
+    - SendGoal, GetResult service classes
+    - FeedbackMessage message class
+    - Action meta-class with property links
+    """
+    act_name = action.namespaced_type.name
+
+    # Collect all fields for dependency includes
+    goal_fields = [FieldInfo(m) for m in action.goal.structure.members]
+    result_fields = [FieldInfo(m) for m in action.result.structure.members]
+    feedback_fields = [FieldInfo(m) for m in action.feedback.structure.members]
+
+    sg_req_fields = [
+        FieldInfo(m) for m in
+        action.send_goal_service.request_message.structure.members]
+    sg_res_fields = [
+        FieldInfo(m) for m in
+        action.send_goal_service.response_message.structure.members]
+    gr_req_fields = [
+        FieldInfo(m) for m in
+        action.get_result_service.request_message.structure.members]
+    gr_res_fields = [
+        FieldInfo(m) for m in
+        action.get_result_service.response_message.structure.members]
+    fb_msg_fields = [
+        FieldInfo(m) for m in action.feedback_message.structure.members]
+
+    all_fields = (goal_fields + result_fields + feedback_fields +
+                  sg_req_fields + sg_res_fields +
+                  gr_req_fields + gr_res_fields + fb_msg_fields)
+
+    # File header - create packages for all sub-types
+    s.write(';; Auto-generated. Do not edit!\n\n', newline=False)
+
+    # Main action package
+    s.write(f'(when (boundp \'{pkg}::{act_name})')
+    s.write(f'  (if (not (find-package "{pkg.upper()}"))')
+    s.write(f'    (make-package "{pkg.upper()}"))')
+    s.write(f'  (shadow \'{act_name} (find-package "{pkg.upper()}")))')
+
+    sub_names = [
+        act_name,
+        f'{act_name}_Goal', f'{act_name}_Result', f'{act_name}_Feedback',
+        f'{act_name}_SendGoal',
+        f'{act_name}_SendGoalRequest', f'{act_name}_SendGoalResponse',
+        f'{act_name}_GetResult',
+        f'{act_name}_GetResultRequest', f'{act_name}_GetResultResponse',
+        f'{act_name}_FeedbackMessage',
+    ]
+    for sub in sub_names:
+        s.write(f'(unless (find-package "{pkg.upper()}::{sub.upper()}")')
+        s.write(f'  (make-package "{pkg.upper()}::{sub.upper()}"))')
+
+    s.write('')
+    s.write('(in-package "ROS")')
+    s.newline()
+
+    # Dependency includes
+    _write_include(s, pkg, all_fields)
+
+    # Goal message
+    goal_name = f'{act_name}_Goal'
+    _write_msg(s, pkg, goal_name, goal_fields,
+               action.goal.constants, subfolder='action')
+
+    # Result message
+    result_name = f'{act_name}_Result'
+    _write_msg(s, pkg, result_name, result_fields,
+               action.result.constants, subfolder='action')
+
+    # Feedback message
+    feedback_name = f'{act_name}_Feedback'
+    _write_msg(s, pkg, feedback_name, feedback_fields,
+               action.feedback.constants, subfolder='action')
+
+    # SendGoal service
+    sg_name = f'{act_name}_SendGoal'
+    sg_req_name = f'{sg_name}Request'
+    sg_res_name = f'{sg_name}Response'
+    _write_srv_component(
+        s, pkg, sg_req_name, sg_req_fields,
+        action.send_goal_service.request_message.constants)
+    _write_srv_component(
+        s, pkg, sg_res_name, sg_res_fields,
+        action.send_goal_service.response_message.constants)
+    _write_service_specific_methods(
+        s, pkg, sg_name, sg_req_name, sg_res_name)
+
+    # GetResult service
+    gr_name = f'{act_name}_GetResult'
+    gr_req_name = f'{gr_name}Request'
+    gr_res_name = f'{gr_name}Response'
+    _write_srv_component(
+        s, pkg, gr_req_name, gr_req_fields,
+        action.get_result_service.request_message.constants)
+    _write_srv_component(
+        s, pkg, gr_res_name, gr_res_fields,
+        action.get_result_service.response_message.constants)
+    _write_service_specific_methods(
+        s, pkg, gr_name, gr_req_name, gr_res_name)
+
+    # FeedbackMessage
+    fb_msg_name = f'{act_name}_FeedbackMessage'
+    _write_msg(s, pkg, fb_msg_name, fb_msg_fields,
+               action.feedback_message.constants, subfolder='action')
+
+    # Action meta-class
+    s.write(f'(defclass {pkg}::{act_name}')
+    with Indent(s):
+        s.write(':super ros::object')
+        s.write(':slots ())')
+    s.newline()
+    _write_ros_datatype(s, pkg, act_name, 'action')
+    s.write(
+        f'(setf (get {pkg}::{act_name} :goal)'
+        f' {pkg}::{goal_name})')
+    s.write(
+        f'(setf (get {pkg}::{act_name} :result)'
+        f' {pkg}::{result_name})')
+    s.write(
+        f'(setf (get {pkg}::{act_name} :feedback)'
+        f' {pkg}::{feedback_name})')
+    s.write(
+        f'(setf (get {pkg}::{act_name} :send-goal-service)'
+        f' {pkg}::{sg_name})')
+    s.write(
+        f'(setf (get {pkg}::{act_name} :get-result-service)'
+        f' {pkg}::{gr_name})')
+    s.write(
+        f'(setf (get {pkg}::{act_name} :feedback-message)'
+        f' {pkg}::{fb_msg_name})')
+    s.newline()
+
+    # ROS 1 backward compatibility aliases
+    # In ROS 1: FibonacciAction, FibonacciGoal, FibonacciActionGoal, etc.
+    # In ROS 2: Fibonacci, Fibonacci_Goal, Fibonacci_SendGoalRequest, etc.
+    s.write(f';; ROS 1 backward compatibility aliases')
+    s.write(f'(setq {pkg}::{act_name}Action {pkg}::{act_name})')
+    s.write(f'(setq {pkg}::{act_name}Goal {pkg}::{goal_name})')
+    s.write(f'(setq {pkg}::{act_name}Result {pkg}::{result_name})')
+    s.write(f'(setq {pkg}::{act_name}Feedback {pkg}::{feedback_name})')
+    s.write(
+        f'(setq {pkg}::{act_name}ActionGoal'
+        f' {pkg}::{sg_req_name})')
+    s.write(
+        f'(setq {pkg}::{act_name}ActionResult'
+        f' {pkg}::{gr_res_name})')
+    s.write(
+        f'(setq {pkg}::{act_name}ActionFeedback'
+        f' {pkg}::{fb_msg_name})')
+    s.newline()
+    s.write('\n')
+
+
 # ============================================================
 # Main entry point
 # ============================================================
@@ -1311,10 +1476,19 @@ def generate_eus(generator_arguments_file):
         locator = IdlLocator(*idl_parts)
         idl_file = parse_idl_file(locator)
 
-        # Collect service message names to skip them in message iteration
+        # Collect action-derived service names to skip in Service loop
+        action_service_names = set()
+        for action in idl_file.content.get_elements_of_type(Action):
+            act_name = action.namespaced_type.name
+            action_service_names.add(f'{act_name}_SendGoal')
+            action_service_names.add(f'{act_name}_GetResult')
+
+        # Collect service/action message names to skip in message iteration
         service_msg_names = set()
         for service in idl_file.content.get_elements_of_type(Service):
             srv_name = service.namespaced_type.name
+            if srv_name in action_service_names:
+                continue
             service_msg_names.add(f'{srv_name}_Request')
             service_msg_names.add(f'{srv_name}_Response')
             service_msg_names.add(f'{srv_name}_Event')
@@ -1333,9 +1507,39 @@ def generate_eus(generator_arguments_file):
             io.close()
             generated_files.append(str(out_file))
 
+        # Collect action-derived message/service names to skip
+        action_msg_names = set()
+        for action in idl_file.content.get_elements_of_type(Action):
+            act_name = action.namespaced_type.name
+            # Action generates these sub-types automatically
+            action_msg_names.add(f'{act_name}_Goal')
+            action_msg_names.add(f'{act_name}_Result')
+            action_msg_names.add(f'{act_name}_Feedback')
+            action_msg_names.add(f'{act_name}_SendGoal_Request')
+            action_msg_names.add(f'{act_name}_SendGoal_Response')
+            action_msg_names.add(f'{act_name}_SendGoal_Event')
+            action_msg_names.add(f'{act_name}_GetResult_Request')
+            action_msg_names.add(f'{act_name}_GetResult_Response')
+            action_msg_names.add(f'{act_name}_GetResult_Event')
+            action_msg_names.add(f'{act_name}_FeedbackMessage')
+
+            out_file = output_dir / 'action' / f'{act_name}.l'
+            os.makedirs(out_file.parent, exist_ok=True)
+
+            io = StringIO()
+            s = IndentedWriter(io)
+            _write_action(s, package_name, action)
+
+            with open(out_file, 'w') as fh:
+                fh.write(io.getvalue() + '\n')
+            io.close()
+            generated_files.append(str(out_file))
+
+        skip_names = service_msg_names | action_msg_names
+
         for message in idl_file.content.get_elements_of_type(Message):
             msg_name = message.structure.namespaced_type.name
-            if msg_name in service_msg_names:
+            if msg_name in skip_names:
                 continue
 
             fields = [FieldInfo(m) for m in message.structure.members]

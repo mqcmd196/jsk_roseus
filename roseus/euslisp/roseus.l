@@ -245,6 +245,9 @@
 
 (defun ros::roseus-add-msgs (pkg) (ros::roseus-add-files pkg "msg"))
 (defun ros::roseus-add-srvs (pkg) (ros::roseus-add-files pkg "srv"))
+(defun ros::roseus-add-actions (pkg)
+  (require :actionlib2 "actionlib2.l")
+  (ros::roseus-add-files pkg "action"))
 
 (unless (fboundp 'load-org-for-ros)
   (setf (symbol-function 'load-org-for-ros) (symbol-function 'load)))
@@ -441,10 +444,13 @@ always the rank of list is 2"
   "load required roseus files for given package"
   (unless (find-package (string-upcase pkg))
     (make-package (string-upcase pkg)))
-  (when (probe-file (format nil "~A/msg" (ros::find-load-msg-path pkg)))
-    (ros::roseus-add-msgs pkg))
-  (when (probe-file (format nil "~A/srv" (ros::find-load-msg-path pkg)))
-    (ros::roseus-add-srvs pkg)))
+  (let ((msg-path (ros::find-load-msg-path pkg)))
+    (when (probe-file (format nil "~A/msg" msg-path))
+      (ros::roseus-add-msgs pkg))
+    (when (probe-file (format nil "~A/srv" msg-path))
+      (ros::roseus-add-srvs pkg))
+    (when (probe-file (format nil "~A/action" msg-path))
+      (ros::roseus-add-actions pkg))))
 
 (setq sys::*exit-hook* 'ros::exit)
 
