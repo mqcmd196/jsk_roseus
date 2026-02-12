@@ -903,7 +903,15 @@ pointer ROSEUS_SERVICE_CALL(register context *ctx, int n, pointer *argv)
   }
 
   // Get service datatype from the request message
+  // The request's datatype is "pkg/srv/SrvNameRequest", but we need "pkg/srv/SrvName"
   string datatype = getString(emessage, K_ROSEUS_DATATYPE);
+  {
+    const string suffix = "Request";
+    if (datatype.size() > suffix.size() &&
+        datatype.compare(datatype.size() - suffix.size(), suffix.size(), suffix) == 0) {
+      datatype = datatype.substr(0, datatype.size() - suffix.size());
+    }
+  }
 
   vpush(emessage);
 
@@ -1199,6 +1207,27 @@ pointer ROSEUS_ADVERTISE_SERVICE(register context *ctx, int n, pointer *argv)
           scb, (pointer)(ctx->vsp - argc), NULL, argc);
         while (argc-- > 0) vpop();
         vpush(eus_response);
+
+        // Check if callback returned a valid response (must be a message with :serialize-cdr)
+        pointer resp_curclass;
+        if (eus_response == NIL || !ispointer(eus_response) ||
+            (pointer)findmethod(ctx, K_ROSEUS_SERIALIZE_CDR,
+                                classof(eus_response), &resp_curclass) == NIL) {
+          RCLCPP_WARN(rclcpp::get_logger("roseus"),
+                      "service %s: callback did not return a valid response object, "
+                      "sending default response", service.c_str());
+          // Send default (zero-initialized) response
+          std::vector<uint8_t> resp_buf(resp_members->size_of_, 0);
+          resp_members->init_function(
+            resp_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
+          rcl_send_response(
+            srv_shared.get(), &request_header.request_id, resp_buf.data());
+          resp_members->fini_function(resp_buf.data());
+          vpop(); // eus_response
+          vpop(); // req_instance
+          req_members->fini_function(req_buf.data());
+          return;
+        }
 
         // Serialize EusLisp response to CDR
         rclcpp::SerializedMessage resp_cdr = serializeEusMessage(eus_response);

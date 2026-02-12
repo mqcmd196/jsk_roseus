@@ -825,9 +825,10 @@ def _write_cdr_align_deserialize(s, align):
     """Write CDR alignment for deserialize (advance ptr-)."""
     if align <= 1:
         return
+    # Alignment is relative to CDR payload start (after 4-byte header)
     s.write(
-        f'(setq ptr- (logand (+ ptr- {align - 1})'
-        f' (lognot {align - 1})))')
+        f'(setq ptr- (+ 4 (logand (+ (- ptr- 4) {align - 1})'
+        f' (lognot {align - 1}))))')
 
 
 def _write_serialize_cdr_builtin(s, f, v):
