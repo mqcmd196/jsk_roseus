@@ -20,11 +20,13 @@
   (:md5sum- () (get (class self) :md5sum-))
   (:datatype- () (get (class self) :datatype-)))
 
-;; Stub: ros::roseus-add-msgs / ros::roseus-add-srvs (no-op for test)
+;; Stub: ros::roseus-add-msgs / ros::roseus-add-srvs / ros::roseus-add-actions (no-op for test)
 (defun ros::roseus-add-msgs (pkg)
   (warning-message 3 ";; [test stub] ros::roseus-add-msgs ~A (skipped)~%" pkg))
 (defun ros::roseus-add-srvs (pkg)
   (warning-message 3 ";; [test stub] ros::roseus-add-srvs ~A (skipped)~%" pkg))
+(defun ros::roseus-add-actions (pkg)
+  (warning-message 3 ";; [test stub] ros::roseus-add-actions ~A (skipped)~%" pkg))
 
 (in-package "USER")
 
@@ -129,6 +131,40 @@
      (setq _data (subseq buf ptr- (+ ptr- n))) (incf ptr- n))
    self))
 
+;; -- unique_identifier_msgs/UUID --
+(unless (find-package "UNIQUE_IDENTIFIER_MSGS")
+  (make-package "UNIQUE_IDENTIFIER_MSGS"))
+(unless (find-package "UNIQUE_IDENTIFIER_MSGS::UUID")
+  (make-package "UNIQUE_IDENTIFIER_MSGS::UUID"))
+
+(defclass unique_identifier_msgs::UUID
+  :super ros::object
+  :slots (_uuid))
+(defmethod unique_identifier_msgs::UUID
+  (:init (&key ((:uuid __uuid) (make-array 16 :initial-element 0 :element-type :char)))
+   (send-super :init) (setq _uuid __uuid) self)
+  (:uuid (&optional v) (if v (setq _uuid v)) _uuid)
+  (:serialization-length () 16)
+  (:serialize (&optional strm)
+   (let ((s (if strm strm (make-string-output-stream 16))))
+     (princ _uuid s)
+     (if (null strm) (get-output-stream-string s))))
+  (:deserialize (buf &optional (ptr- 0))
+   (setq _uuid (make-array 16 :element-type :char))
+   (replace _uuid buf :start2 ptr-) (incf ptr- 16)
+   self)
+  (:serialization-length-cdr () (+ 4 16))
+  (:serialize-cdr (&optional strm)
+   (let ((s (if strm strm (make-string-output-stream 20))))
+     (write-byte 0 s) (write-byte 1 s) (write-byte 0 s) (write-byte 0 s)
+     (princ _uuid s)
+     (if (null strm) (get-output-stream-string s))))
+  (:deserialize-cdr (buf &optional (ptr- 0))
+   (incf ptr- 4)
+   (setq _uuid (make-array 16 :element-type :char))
+   (replace _uuid buf :start2 ptr-) (incf ptr- 16)
+   self))
+
 ;; ============================================================
 ;; Test infrastructure
 ;; ============================================================
@@ -151,7 +187,7 @@
   (setq *test-l-dir* (elt lisp::*eustop-argument* 2)))
 (format t ";; Loading generated .l files from: ~A~%" *test-l-dir*)
 
-(dolist (subdir '("msg" "srv"))
+(dolist (subdir '("msg" "srv" "action"))
   (let ((dir (format nil "~A/~A/" *test-l-dir* subdir)))
     (when (probe-file dir)
       (dolist (f (directory dir))
@@ -343,6 +379,115 @@
   (assert (string= "roseus/srv/AddTwoInts"
                     (get roseus::AddTwoInts :datatype-))
           "AddTwoInts service datatype-"))
+
+;; ============================================================
+;; Test: roseus/Fibonacci (action)
+;; ============================================================
+(deftest test-fibonacci-action-classes-exist
+  (assert (boundp 'roseus::Fibonacci) "action class exists")
+  (assert (boundp 'roseus::Fibonacci_Goal) "goal class exists")
+  (assert (boundp 'roseus::Fibonacci_Result) "result class exists")
+  (assert (boundp 'roseus::Fibonacci_Feedback) "feedback class exists")
+  (assert (boundp 'roseus::Fibonacci_SendGoal) "send-goal service class exists")
+  (assert (boundp 'roseus::Fibonacci_SendGoalRequest) "send-goal request class exists")
+  (assert (boundp 'roseus::Fibonacci_SendGoalResponse) "send-goal response class exists")
+  (assert (boundp 'roseus::Fibonacci_GetResult) "get-result service class exists")
+  (assert (boundp 'roseus::Fibonacci_GetResultRequest) "get-result request class exists")
+  (assert (boundp 'roseus::Fibonacci_GetResultResponse) "get-result response class exists")
+  (assert (boundp 'roseus::Fibonacci_FeedbackMessage) "feedback message class exists"))
+
+(deftest test-fibonacci-action-properties
+  ;; Action meta-class properties
+  (assert (eq roseus::Fibonacci_Goal
+              (get roseus::Fibonacci :goal))
+          "action :goal link")
+  (assert (eq roseus::Fibonacci_Result
+              (get roseus::Fibonacci :result))
+          "action :result link")
+  (assert (eq roseus::Fibonacci_Feedback
+              (get roseus::Fibonacci :feedback))
+          "action :feedback link")
+  (assert (eq roseus::Fibonacci_SendGoal
+              (get roseus::Fibonacci :send-goal-service))
+          "action :send-goal-service link")
+  (assert (eq roseus::Fibonacci_GetResult
+              (get roseus::Fibonacci :get-result-service))
+          "action :get-result-service link")
+  (assert (eq roseus::Fibonacci_FeedbackMessage
+              (get roseus::Fibonacci :feedback-message))
+          "action :feedback-message link")
+  ;; Datatype
+  (assert (string= "roseus/action/Fibonacci"
+                    (get roseus::Fibonacci :datatype-))
+          "Fibonacci action datatype-"))
+
+(deftest test-fibonacci-goal-roundtrip
+  (let* ((msg (instance roseus::Fibonacci_Goal :init :order 5))
+         (msg2 (round-trip msg)))
+    (assert (= 5 (send msg2 :order)) "rt goal order")))
+
+(deftest test-fibonacci-result-roundtrip
+  (let* ((msg (instance roseus::Fibonacci_Result :init
+                        :sequence (integer-vector 0 1 1 2 3 5)))
+         (msg2 (round-trip msg)))
+    (assert (= 6 (length (send msg2 :sequence))) "rt result sequence length")
+    (dotimes (i 6)
+      (assert (= (elt (integer-vector 0 1 1 2 3 5) i)
+                 (elt (send msg2 :sequence) i))
+              (format nil "rt result sequence[~A]" i)))))
+
+(deftest test-fibonacci-feedback-roundtrip
+  (let* ((msg (instance roseus::Fibonacci_Feedback :init
+                        :sequence (integer-vector 0 1 1)))
+         (msg2 (round-trip msg)))
+    (assert (= 3 (length (send msg2 :sequence))) "rt feedback sequence length")
+    (dotimes (i 3)
+      (assert (= (elt (integer-vector 0 1 1) i)
+                 (elt (send msg2 :sequence) i))
+              (format nil "rt feedback sequence[~A]" i)))))
+
+(deftest test-fibonacci-sendgoal-request-roundtrip
+  (let* ((uuid (make-array 16 :element-type :char))
+         (goal (instance roseus::Fibonacci_Goal :init :order 10))
+         (req (instance roseus::Fibonacci_SendGoalRequest :init
+                        :goal_id (instance unique_identifier_msgs::UUID :init :uuid uuid)
+                        :goal goal))
+         (req2 (round-trip req)))
+    (assert (= 10 (send (send req2 :goal) :order)) "rt sendgoal request goal order")
+    (assert (= 16 (length (send (send req2 :goal_id) :uuid))) "rt sendgoal request uuid length")))
+
+(deftest test-fibonacci-getresult-response-roundtrip
+  (let* ((result (instance roseus::Fibonacci_Result :init
+                           :sequence (integer-vector 0 1 1 2 3)))
+         (resp (instance roseus::Fibonacci_GetResultResponse :init
+                         :status 4  ;; SUCCEEDED
+                         :result result))
+         (resp2 (round-trip resp)))
+    (assert (= 4 (send resp2 :status)) "rt getresult response status")
+    (assert (= 5 (length (send (send resp2 :result) :sequence)))
+            "rt getresult response result sequence length")))
+
+(deftest test-fibonacci-sendgoal-service
+  ;; SendGoal service linkage
+  (assert (eq roseus::Fibonacci_SendGoalRequest
+              (get roseus::Fibonacci_SendGoal :request))
+          "sendgoal service :request link")
+  (assert (eq roseus::Fibonacci_SendGoalResponse
+              (get roseus::Fibonacci_SendGoal :response))
+          "sendgoal service :response link")
+  ;; :response method on request
+  (let ((req (instance roseus::Fibonacci_SendGoalRequest :init)))
+    (assert (derivedp (send req :response) roseus::Fibonacci_SendGoalResponse)
+            "sendgoal request :response creates response")))
+
+(deftest test-fibonacci-getresult-service
+  ;; GetResult service linkage
+  (assert (eq roseus::Fibonacci_GetResultRequest
+              (get roseus::Fibonacci_GetResult :request))
+          "getresult service :request link")
+  (assert (eq roseus::Fibonacci_GetResultResponse
+              (get roseus::Fibonacci_GetResult :response))
+          "getresult service :response link"))
 
 ;; ============================================================
 ;; Run all tests

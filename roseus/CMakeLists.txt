@@ -39,7 +39,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}_interfaces
   msg/TestName2.msg
   srv/AddTwoInts.srv
   srv/StringString.srv
-  DEPENDENCIES std_msgs builtin_interfaces
+  action/Fibonacci.action
+  DEPENDENCIES std_msgs builtin_interfaces action_msgs unique_identifier_msgs
 )
 
 # Create typesupport symlinks: runtime looks for roseus__* but libraries are roseus_interfaces__*
@@ -97,6 +98,7 @@ if(BUILD_TESTING)
     add_launch_test(test/add-two-ints-server-groupname.test.py TIMEOUT 120)
     add_launch_test(test/service-callback.test.py TIMEOUT 120)
     add_launch_test(test/multi-queue.test.py TIMEOUT 60)
+    add_launch_test(test/fibonacci-action.test.py TIMEOUT 120)
 
     # Timeout settings
     set_tests_properties(
