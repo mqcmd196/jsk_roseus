@@ -56,6 +56,7 @@ endforeach()
 
 if(BUILD_TESTING)
   find_program(EUS_EXECUTABLE eus)
+  ament_auto_find_test_dependencies()
   if(EUS_EXECUTABLE)
     set(_test_eus_l_dir "${CMAKE_CURRENT_BINARY_DIR}/rosidl_generator_eus/${PROJECT_NAME}")
     add_test(
@@ -89,27 +90,17 @@ if(BUILD_TESTING)
     add_test(NAME test_msg_serialize
       COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-msg-serialize-ros2.l)
 
-    # Category C: Multi-node tests (shell wrappers)
-    add_test(NAME test_talker_listener
-      COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test/test-talker-listener.sh)
-    add_test(NAME test_add_two_ints
-      COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test/test-add-two-ints.sh)
-    add_test(NAME test_add_two_ints_server
-      COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test/test-add-two-ints-server.sh)
-    add_test(NAME test_add_two_ints_server_groupname
-      COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test/test-add-two-ints-server-groupname.sh)
-    add_test(NAME test_service_callback
-      COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test/test-service-callback.sh)
-    add_test(NAME test_multi_queue
-      COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test/test-multi-queue.sh)
+    # Category C: Multi-node tests (launch_testing)
+    add_launch_test(test/talker-listener.test.py TIMEOUT 60)
+    add_launch_test(test/add-two-ints.test.py TIMEOUT 120)
+    add_launch_test(test/add-two-ints-server.test.py TIMEOUT 120)
+    add_launch_test(test/add-two-ints-server-groupname.test.py TIMEOUT 120)
+    add_launch_test(test/service-callback.test.py TIMEOUT 120)
+    add_launch_test(test/multi-queue.test.py TIMEOUT 60)
 
     # Timeout settings
     set_tests_properties(
-      test_add_two_ints test_add_two_ints_server
-      test_add_two_ints_server_groupname test_service_callback
-      PROPERTIES TIMEOUT 120)
-    set_tests_properties(
-      test_mark_lock test_talker_listener test_multi_queue
+      test_mark_lock
       PROPERTIES TIMEOUT 60)
   endif()
 endif()
