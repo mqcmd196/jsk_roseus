@@ -22,8 +22,9 @@ set(euslisp_INCLUDE_DIRS ${EUSDIR}/include)
 
 ament_auto_add_library(roseus SHARED roseus2.cpp)
 
+ament_generate_version_header(roseus)
 target_compile_options(roseus
-  PRIVATE -O2 -DNDEBUG -DLinux -D_REENTRANT -DTHREADED -DPTHREAD -DX11R6_1 -Dx86_64 -Wno-comment)
+  PRIVATE -O2 -DNDEBUG -DLinux -D_REENTRANT -DTHREADED -DPTHREAD -DX11R6_1 -Dx86_64 -Wno-comment -Wno-deprecated-declarations)
 target_include_directories(roseus PUBLIC ${euslisp_INCLUDE_DIRS})
 
 # Generate ROS 2 interfaces from .msg/.srv files
@@ -64,7 +65,25 @@ install(FILES
   DESTINATION share/${PROJECT_NAME}/cmake/
 )
 
-ament_auto_package(CONFIG_EXTRAS cmake/roseus-extras.cmake.in)
+# Configure roseus launcher script (substitute @EUSDIR@)
+configure_file(bin/roseus2.in ${CMAKE_CURRENT_BINARY_DIR}/bin/roseus @ONLY)
+# Set execute permission (needed for --symlink-install where symlink points to build dir)
+file(CHMOD ${CMAKE_CURRENT_BINARY_DIR}/bin/roseus PERMISSIONS
+  OWNER_READ OWNER_WRITE OWNER_EXECUTE
+  GROUP_READ GROUP_EXECUTE
+  WORLD_READ WORLD_EXECUTE)
+
+# Install roseus launcher script to bin/ for direct "roseus" command access
+install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/bin/roseus
+  DESTINATION bin)
+
+# Create roseus.so symlink in euslisp/ dir (EusLisp load-library expects "roseus.so" in same dir as roseus.l)
+install(CODE "execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink ../../../lib/libroseus.so roseus.so WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/roseus/euslisp)")
+
+ament_auto_package(
+  CONFIG_EXTRAS cmake/roseus-extras.cmake.in
+  INSTALL_TO_SHARE cmake euslisp
+)
 
 else() # if($ENV{ROS_VERSION} EQUAL 2)
 
