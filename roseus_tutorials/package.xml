@@ -20,6 +20,7 @@
   <buildtool_depend condition="$ROS_VERSION == 2">ament_cmake_auto</buildtool_depend>
 
   <depend>roseus</depend>
+  <depend condition="$ROS_VERSION == 2">example_interfaces</depend>
   <depend condition="$ROS_VERSION == 2">std_msgs</depend>
   <depend condition="$ROS_VERSION == 2">std_srvs</depend>
 
