@@ -12,9 +12,7 @@
 (if (not (find-package "UNIQUE_IDENTIFIER_MSGS"))
   (ros::load-ros-package "unique_identifier_msgs"))
 
-;; ============================================================
 ;; Goal state constants (matching action_msgs/msg/GoalStatus)
-;; ============================================================
 (defconstant ros::*action-goal-state-unknown*   0)
 (defconstant ros::*action-goal-state-accepted*  1)
 (defconstant ros::*action-goal-state-executing* 2)
@@ -29,10 +27,6 @@
 (defconstant ros::*goal-event-succeed*     2)
 (defconstant ros::*goal-event-abort*       3)
 (defconstant ros::*goal-event-canceled*    4)
-
-;; ============================================================
-;; UUID generation
-;; ============================================================
 
 (defun ros::generate-uuid ()
   "Generate a random UUID v4 as a 16-byte string."
@@ -50,11 +44,8 @@
     (send msg :uuid uuid-bytes)
     msg))
 
-;; ============================================================
-;; simple-action-client
-;; ============================================================
-
 (defclass ros::simple-action-client
+    ;; Simple Action Client for ROS 1 compatibility
   :super ros::object
   :slots (name-space action-spec action-type-str
           goal-class result-class feedback-class
@@ -223,11 +214,8 @@
    (ros::action-client-destroy name-space))
   )
 
-;; ============================================================
-;; simple-action-server
-;; ============================================================
-
 (defclass ros::simple-action-server
+    ;; Simple Action Server for ROS 1 compatibility
   :super ros::object
   :slots (name-space action-spec action-type-str
           goal-class result-class feedback-class

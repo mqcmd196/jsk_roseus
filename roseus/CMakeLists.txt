@@ -56,61 +56,53 @@ foreach(_suffix ${_typesupport_suffixes})
 endforeach()
 
 if(BUILD_TESTING)
-  find_program(EUS_EXECUTABLE eus)
   ament_auto_find_test_dependencies()
-  if(EUS_EXECUTABLE)
-    set(_test_eus_l_dir "${CMAKE_CURRENT_BINARY_DIR}/rosidl_generator_eus/${PROJECT_NAME}")
-    add_test(
-      NAME test_rosidl_generator_eus
-      COMMAND roseus
-        ${CMAKE_CURRENT_SOURCE_DIR}/test/test-rosidl-generator-eus.l
-        ${_test_eus_l_dir}
-    )
+  ament_clang_format(
+    CONFIG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/.clang-format"
+    roseus2.cpp
+  )
+  set(_test_eus_l_dir "${CMAKE_CURRENT_BINARY_DIR}/rosidl_generator_eus/${PROJECT_NAME}")
+  add_test(
+    NAME test_rosidl_generator_eus
+    COMMAND roseus
+    ${CMAKE_CURRENT_SOURCE_DIR}/test/test-rosidl-generator-eus.l
+    ${_test_eus_l_dir}
+  )
+  add_test(NAME test_compile_message
+    COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-compile-message.l)
+  add_test(NAME test_mark_lock
+    COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-mark-lock-ros2.l)
+  add_test(NAME test_unadvertise_service
+    COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-unadvertise-service.l)
+  add_test(NAME test_roseus
+    COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-roseus-ros2.l)
+  add_test(NAME test_nodename
+    COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-nodename-ros2.l test_nodename)
+  add_test(NAME test_nodename_dash
+    COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-nodename-ros2.l test-nodename)
+  add_test(NAME test_namespace_root
+    COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-namespace-ros2.l /)
+  add_test(NAME test_namespace_custom
+    COMMAND bash -c "roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-namespace-ros2.l /ns --ros-args -r __ns:=/ns")
+  add_test(NAME test_parameter
+    COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/param-test-ros2.l)
+  add_test(NAME test_msg_serialize
+    COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-msg-serialize-ros2.l)
 
-    # Category A: Single-node tests (no modifications needed)
-    add_test(NAME test_compile_message
-      COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-compile-message.l)
-    add_test(NAME test_mark_lock
-      COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-mark-lock-ros2.l)
-    add_test(NAME test_unadvertise_service
-      COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-unadvertise-service.l)
+  add_launch_test(test/talker-listener.test.py TIMEOUT 60)
+  add_launch_test(test/add-two-ints.test.py TIMEOUT 120)
+  add_launch_test(test/add-two-ints-server.test.py TIMEOUT 120)
+  add_launch_test(test/add-two-ints-server-groupname.test.py TIMEOUT 120)
+  add_launch_test(test/service-callback.test.py TIMEOUT 120)
+  add_launch_test(test/multi-queue.test.py TIMEOUT 60)
+  add_launch_test(test/fibonacci-action.test.py TIMEOUT 120)
+  add_launch_test(test/fibonacci-action-ros2-api.test.py TIMEOUT 120)
 
-    # Category B: Single-node tests (ROS 2 adapted versions)
-    add_test(NAME test_roseus
-      COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-roseus-ros2.l)
-    add_test(NAME test_nodename
-      COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-nodename-ros2.l test_nodename)
-    add_test(NAME test_nodename_dash
-      COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-nodename-ros2.l test-nodename)
-    add_test(NAME test_namespace_root
-      COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-namespace-ros2.l /)
-    add_test(NAME test_namespace_custom
-      COMMAND bash -c "roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-namespace-ros2.l /ns --ros-args -r __ns:=/ns")
-    add_test(NAME test_parameter
-      COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/param-test-ros2.l)
-    add_test(NAME test_msg_serialize
-      COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-msg-serialize-ros2.l)
-
-    # Category C: Multi-node tests (launch_testing)
-    add_launch_test(test/talker-listener.test.py TIMEOUT 60)
-    add_launch_test(test/add-two-ints.test.py TIMEOUT 120)
-    add_launch_test(test/add-two-ints-server.test.py TIMEOUT 120)
-    add_launch_test(test/add-two-ints-server-groupname.test.py TIMEOUT 120)
-    add_launch_test(test/service-callback.test.py TIMEOUT 120)
-    add_launch_test(test/multi-queue.test.py TIMEOUT 60)
-    add_launch_test(test/fibonacci-action.test.py TIMEOUT 120)
-    add_launch_test(test/fibonacci-action-ros2-api.test.py TIMEOUT 120)
-
-    # Timeout settings
-    set_tests_properties(
-      test_mark_lock
-      PROPERTIES TIMEOUT 60)
-  endif()
+  set_tests_properties(
+    test_mark_lock
+    PROPERTIES TIMEOUT 60)
 endif()
 
-# Generate .l files for dependency message packages (std_msgs, etc.)
-# This must be included before ament_auto_package() because the
-# ament_package hook in CONFIG_EXTRAS only takes effect for downstream packages.
 include(cmake/roseus_generate_dep_msgs.cmake)
 
 install(FILES
@@ -118,15 +110,11 @@ install(FILES
   DESTINATION share/${PROJECT_NAME}/cmake/
 )
 
-# Configure roseus launcher script (substitute @EUSDIR@)
 configure_file(bin/roseus2.in ${CMAKE_CURRENT_BINARY_DIR}/bin/roseus @ONLY)
-# Set execute permission (needed for --symlink-install where symlink points to build dir)
 file(CHMOD ${CMAKE_CURRENT_BINARY_DIR}/bin/roseus PERMISSIONS
   OWNER_READ OWNER_WRITE OWNER_EXECUTE
   GROUP_READ GROUP_EXECUTE
   WORLD_READ WORLD_EXECUTE)
-
-# Install roseus launcher script to bin/ for direct "roseus" command access
 install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/bin/roseus
   DESTINATION bin)
 

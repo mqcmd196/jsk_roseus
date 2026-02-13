@@ -1,7 +1,6 @@
 /*
  * Software License Agreement (BSD License)
  *
- *  Copyright (c) 2008, Willow Garage, Inc.
  *  Copyright (c) 2026, JSK Robotics Laboratory.
  *  All rights reserved.
  *
@@ -35,6 +34,7 @@
 
 // ROS 2 EusLisp C++ binding layer
 // Based on the ROS 1 roseus.cpp by Kei Okada
+// Author: Yoshiki Obinata <obinata@jsk.imi.i.u-tokyo.ac.jp>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -74,24 +74,25 @@
 #include <roseus/version.h>
 
 // EusLisp keyword masking
-#define class   eus_class
-#define throw   eus_throw
-#define export  eus_export
-#define vector  eus_vector
-#define string  eus_string
+#define class eus_class
+#define throw eus_throw
+#define export eus_export
+#define vector eus_vector
+#define string eus_string
 
 #include "eus.h"
 extern "C" {
-  pointer ___roseus(register context *ctx, int n, pointer *argv, pointer env);
-  void register_roseus(){
-    char modname[] = "___roseus";
-    return add_module_initializer(modname, (pointer (*)())___roseus);
-  }
-  byte *get_string(register pointer s){
-    if (isstring(s)) return(s->c.str.chars);
-    if (issymbol(s)) return(s->c.sym.pname->c.str.chars);
-    else error(E_NOSTRING); return NULL;
-  }
+pointer ___roseus(register context* ctx, int n, pointer* argv, pointer env);
+void register_roseus() {
+  char modname[] = "___roseus";
+  return add_module_initializer(modname, (pointer(*)())___roseus);
+}
+byte* get_string(register pointer s) {
+  if (isstring(s)) return (s->c.str.chars);
+  if (issymbol(s)) return (s->c.sym.pname->c.str.chars);
+  else error(E_NOSTRING);
+  return NULL;
+}
 }
 
 #undef class
@@ -109,13 +110,13 @@ using namespace std;
 // Per-action-client data: holds rcl client, type supports, and libraries
 struct ActionClientData {
   rcl_action_client_t client;
-  const rosidl_action_type_support_t *action_ts;
+  const rosidl_action_type_support_t* action_ts;
   // Introspection for C struct allocation/init/fini
-  const rosidl_typesupport_introspection_cpp::ServiceMembers *goal_svc_intro;
-  const rosidl_typesupport_introspection_cpp::ServiceMembers *result_svc_intro;
-  const rosidl_typesupport_introspection_cpp::ServiceMembers *cancel_svc_intro;
-  const rosidl_typesupport_introspection_cpp::MessageMembers *feedback_msg_intro;
-  const rosidl_typesupport_introspection_cpp::MessageMembers *status_msg_intro;
+  const rosidl_typesupport_introspection_cpp::ServiceMembers* goal_svc_intro;
+  const rosidl_typesupport_introspection_cpp::ServiceMembers* result_svc_intro;
+  const rosidl_typesupport_introspection_cpp::ServiceMembers* cancel_svc_intro;
+  const rosidl_typesupport_introspection_cpp::MessageMembers* feedback_msg_intro;
+  const rosidl_typesupport_introspection_cpp::MessageMembers* status_msg_intro;
   // Keep shared libraries alive
   vector<shared_ptr<rcpputils::SharedLibrary>> libs;
 };
@@ -123,23 +124,22 @@ struct ActionClientData {
 // Per-action-server data
 struct ActionServerData {
   rcl_action_server_t server;
-  const rosidl_action_type_support_t *action_ts;
-  const rosidl_typesupport_introspection_cpp::ServiceMembers *goal_svc_intro;
-  const rosidl_typesupport_introspection_cpp::ServiceMembers *result_svc_intro;
-  const rosidl_typesupport_introspection_cpp::ServiceMembers *cancel_svc_intro;
-  const rosidl_typesupport_introspection_cpp::MessageMembers *feedback_msg_intro;
-  const rosidl_typesupport_introspection_cpp::MessageMembers *status_msg_intro;
+  const rosidl_action_type_support_t* action_ts;
+  const rosidl_typesupport_introspection_cpp::ServiceMembers* goal_svc_intro;
+  const rosidl_typesupport_introspection_cpp::ServiceMembers* result_svc_intro;
+  const rosidl_typesupport_introspection_cpp::ServiceMembers* cancel_svc_intro;
+  const rosidl_typesupport_introspection_cpp::MessageMembers* feedback_msg_intro;
+  const rosidl_typesupport_introspection_cpp::MessageMembers* status_msg_intro;
   vector<shared_ptr<rcpputils::SharedLibrary>> libs;
   // Goal handle management
-  vector<rcl_action_goal_handle_t *> goal_handles;
+  vector<rcl_action_goal_handle_t*> goal_handles;
   // Request headers for pending service requests
   rmw_request_id_t last_goal_request_header;
   rmw_request_id_t last_result_request_header;
   rmw_request_id_t last_cancel_request_header;
 };
 
-struct RoseusStaticData
-{
+struct RoseusStaticData {
   RoseusStaticData() {}
   ~RoseusStaticData() {}
   shared_ptr<rclcpp::Node> node;
@@ -188,7 +188,7 @@ extern pointer LAMCLOSURE;
  ************************************************************/
 
 static string getString(pointer message, pointer method) {
-  context *ctx = current_ctx;
+  context* ctx = current_ctx;
   pointer r, curclass;
   if ((pointer)findmethod(ctx, method, classof(message), &curclass) != NIL) {
     r = csend(ctx, message, method, 0);
@@ -201,12 +201,12 @@ static string getString(pointer message, pointer method) {
   if (!isstring(r)) {
     RCLCPP_ERROR(rclcpp::get_logger("roseus"), "method returned non-string");
   }
-  string ret = (char *)get_string(r);
+  string ret = (char*)get_string(r);
   return ret;
 }
 
 static int getInteger(pointer message, pointer method) {
-  context *ctx = current_ctx;
+  context* ctx = current_ctx;
   pointer a, curclass;
   vpush(message);
   a = (pointer)findmethod(ctx, method, classof(message), &curclass);
@@ -238,7 +238,7 @@ static string resolveName(const string& name) {
 
 /* Serialize an EusLisp message to CDR via :serialize-cdr */
 static rclcpp::SerializedMessage serializeEusMessage(pointer message) {
-  context *ctx = current_ctx;
+  context* ctx = current_ctx;
   pointer a, curclass;
   vpush(message);
 
@@ -265,7 +265,7 @@ static rclcpp::SerializedMessage serializeEusMessage(pointer message) {
     return rclcpp::SerializedMessage(0);
   }
 
-  uint8_t *data = (uint8_t *)get_string(r);
+  uint8_t* data = (uint8_t*)get_string(r);
   size_t data_len = strlength(r);
 
   rclcpp::SerializedMessage serialized_msg(data_len);
@@ -278,10 +278,10 @@ static rclcpp::SerializedMessage serializeEusMessage(pointer message) {
 
 /* Deserialize CDR bytes into an EusLisp message instance via :deserialize-cdr */
 static void deserializeEusMessage(pointer message, const std::shared_ptr<const rclcpp::SerializedMessage>& serialized_msg) {
-  context *ctx = current_ctx;
+  context* ctx = current_ctx;
   vpush(message);
 
-  const uint8_t *data = serialized_msg->get_rcl_serialized_message().buffer;
+  const uint8_t* data = serialized_msg->get_rcl_serialized_message().buffer;
   size_t data_len = serialized_msg->get_rcl_serialized_message().buffer_length;
 
   if (data_len == 0) {
@@ -298,14 +298,14 @@ static void deserializeEusMessage(pointer message, const std::shared_ptr<const r
     return;
   }
 
-  pointer p = makestring((char *)data, data_len);
+  pointer p = makestring((char*)data, data_len);
   vpush(p);
   pointer r = csend(ctx, message, K_ROSEUS_DESERIALIZE_CDR, 1, p);
-  vpop(); // p
+  vpop();  // p
   if (r == NIL) {
     RCLCPP_ERROR(rclcpp::get_logger("roseus"), ":deserialize-cdr returned nil");
   }
-  vpop(); // message
+  vpop();  // message
 }
 
 /***********************************************************
@@ -313,14 +313,14 @@ static void deserializeEusMessage(pointer message, const std::shared_ptr<const r
  ************************************************************/
 
 /* Extract callable from EusLisp callback specification */
-static pointer resolveCallback(context *ctx, pointer scb) {
+static pointer resolveCallback(context* ctx, pointer scb) {
   if (piscode(scb)) {
     return scb;
   } else if (ccar(scb) == LAMCLOSURE) {
     if (ccar(ccdr(scb)) != NIL) {
-      return ccar(ccdr(scb)); // named function
+      return ccar(ccdr(scb));  // named function
     } else {
-      return scb; // lambda
+      return scb;  // lambda
     }
   } else {
     RCLCPP_ERROR(rclcpp::get_logger("roseus"), "callback function install error");
@@ -329,10 +329,9 @@ static pointer resolveCallback(context *ctx, pointer scb) {
 }
 
 /* Prevent GC of callback function and its arguments */
-static void protectCallback(context *ctx, pointer scb, pointer args) {
+static void protectCallback(context* ctx, pointer scb, pointer args) {
   pointer p = gensym(ctx);
-  setval(ctx, intern(ctx, (char*)(p->c.sym.pname->c.str.chars),
-                     strlen((char*)(p->c.sym.pname->c.str.chars)), lisppkg),
+  setval(ctx, intern(ctx, (char*)(p->c.sym.pname->c.str.chars), strlen((char*)(p->c.sym.pname->c.str.chars)), lisppkg),
          cons(ctx, scb, args));
 }
 
@@ -340,9 +339,8 @@ static void protectCallback(context *ctx, pointer scb, pointer args) {
  *   Signal handler
  ************************************************************/
 
-static void roseusSignalHandler(int sig)
-{
-  context *ctx = euscontexts[thr_self()];
+static void roseusSignalHandler(int sig) {
+  context* ctx = euscontexts[thr_self()];
   ctx->intsig = sig;
 }
 
@@ -350,12 +348,11 @@ static void roseusSignalHandler(int sig)
  *   Core EUSLISP functions
  ************************************************************/
 
-pointer ROSEUS(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS(register context* ctx, int n, pointer* argv) {
   char name[256] = "";
   uint32_t options = 0;
   int cargc = 0;
-  char *cargv[32];
+  char* cargv[32];
 
   if (s_bInstalled) {
     RCLCPP_WARN(s_node->get_logger(), "ROSEUS is already installed as %s",
@@ -365,14 +362,14 @@ pointer ROSEUS(register context *ctx, int n, pointer *argv)
 
   ckarg(3);
   if (isstring(argv[0]))
-    strncpy(name, (char *)(argv[0]->c.str.chars), 255);
+    strncpy(name, (char*)(argv[0]->c.str.chars), 255);
   else error(E_NOSTRING);
   options = ckintval(argv[1]);
   pointer p = argv[2];
   if (islist(p)) {
     while (1) {
       if (!iscons(p)) break;
-      cargv[cargc] = (char *)((ccar(p))->c.str.chars);
+      cargv[cargc] = (char*)((ccar(p))->c.str.chars);
       cargc++;
       p = ccdr(p);
     }
@@ -431,7 +428,7 @@ pointer ROSEUS(register context *ctx, int n, pointer *argv)
 
   // Handle anonymous name
   string node_name(name);
-  if (options & 1) { // AnonymousName flag
+  if (options & 1) {  // AnonymousName flag
     auto now = std::chrono::steady_clock::now();
     auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
     node_name += "_" + std::to_string(ns);
@@ -439,7 +436,7 @@ pointer ROSEUS(register context *ctx, int n, pointer *argv)
 
   try {
     s_node = rclcpp::Node::make_shared(node_name, node_options);
-  } catch (const std::exception &e) {
+  } catch (const std::exception& e) {
     RCLCPP_ERROR(rclcpp::get_logger("roseus"), "%s", e.what());
     error(E_MISMATCHARG);
     return (NIL);
@@ -457,8 +454,7 @@ pointer ROSEUS(register context *ctx, int n, pointer *argv)
   return (T);
 }
 
-pointer ROSEUS_SPIN(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_SPIN(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   while (ctx->intsig == 0 && rclcpp::ok()) {
     s_executor->spin_some();
@@ -467,14 +463,13 @@ pointer ROSEUS_SPIN(register context *ctx, int n, pointer *argv)
   return (NIL);
 }
 
-pointer ROSEUS_SPINONCE(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_SPINONCE(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg2(0, 1);
 
   if (n > 0) {
     string groupname;
-    if (isstring(argv[0])) groupname.assign((char *)get_string(argv[0]));
+    if (isstring(argv[0])) groupname.assign((char*)get_string(argv[0]));
     else error(E_NOSTRING);
 
     auto it = s_mapCallbackGroup.find(groupname);
@@ -491,8 +486,7 @@ pointer ROSEUS_SPINONCE(register context *ctx, int n, pointer *argv)
   }
 }
 
-pointer ROSEUS_TIME_NOW(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_TIME_NOW(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   pointer timevec;
   rclcpp::Time t = s_node->now();
@@ -507,8 +501,7 @@ pointer ROSEUS_TIME_NOW(register context *ctx, int n, pointer *argv)
   return (timevec);
 }
 
-pointer ROSEUS_RATE(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_RATE(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   numunion nu;
   ckarg(1);
@@ -517,26 +510,23 @@ pointer ROSEUS_RATE(register context *ctx, int n, pointer *argv)
   return (T);
 }
 
-pointer ROSEUS_SLEEP(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_SLEEP(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   s_rate->sleep();
   return (T);
 }
 
-pointer ROSEUS_DURATION_SLEEP(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_DURATION_SLEEP(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   numunion nu;
   ckarg(1);
   float sleep_sec = ckfltval(argv[0]);
   rclcpp::sleep_for(std::chrono::duration_cast<std::chrono::nanoseconds>(
-    std::chrono::duration<double>(sleep_sec)));
+      std::chrono::duration<double>(sleep_sec)));
   return (T);
 }
 
-pointer ROSEUS_OK(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_OK(register context* ctx, int n, pointer* argv) {
   if (rclcpp::ok()) {
     return (T);
   } else {
@@ -548,69 +538,66 @@ pointer ROSEUS_OK(register context *ctx, int n, pointer *argv)
  *   Logging
  ************************************************************/
 
-#define def_rosconsole_formatter(funcname, loglevel)              \
-  pointer funcname(register context *ctx, int n, pointer *argv)  \
-  {                                                              \
-    pointer *argv2, msg;                                         \
-    int argc2;                                                   \
-    argc2 = n + 1;                                               \
-    argv2 = (pointer *)malloc(sizeof(pointer) * argc2);          \
-    argv2[0] = NIL;                                              \
-    for (int i = 0; i < n; i++) argv2[i+1] = argv[i];           \
-    msg = XFORMAT(ctx, argc2, argv2);                            \
-    if (s_bInstalled) {                                          \
-      RCUTILS_LOG_COND_NAMED(loglevel, RCUTILS_LOG_CONDITION_EMPTY, \
-        RCUTILS_LOG_CONDITION_EMPTY, s_node->get_name(),         \
-        "%s", msg->c.str.chars);                                 \
-    } else {                                                     \
-      RCUTILS_LOG_COND_NAMED(loglevel, RCUTILS_LOG_CONDITION_EMPTY, \
-        RCUTILS_LOG_CONDITION_EMPTY, "roseus",                   \
-        "%s", msg->c.str.chars);                                 \
-    }                                                            \
-    free(argv2);                                                 \
-    return (T);                                                  \
+#define def_rosconsole_formatter(funcname, loglevel)                          \
+  pointer funcname(register context* ctx, int n, pointer* argv) {             \
+    pointer *argv2, msg;                                                      \
+    int argc2;                                                                \
+    argc2 = n + 1;                                                            \
+    argv2 = (pointer*)malloc(sizeof(pointer) * argc2);                        \
+    argv2[0] = NIL;                                                           \
+    for (int i = 0; i < n; i++) argv2[i + 1] = argv[i];                       \
+    msg = XFORMAT(ctx, argc2, argv2);                                         \
+    if (s_bInstalled) {                                                       \
+      RCUTILS_LOG_COND_NAMED(loglevel, RCUTILS_LOG_CONDITION_EMPTY,           \
+                             RCUTILS_LOG_CONDITION_EMPTY, s_node->get_name(), \
+                             "%s", msg->c.str.chars);                         \
+    } else {                                                                  \
+      RCUTILS_LOG_COND_NAMED(loglevel, RCUTILS_LOG_CONDITION_EMPTY,           \
+                             RCUTILS_LOG_CONDITION_EMPTY, "roseus",           \
+                             "%s", msg->c.str.chars);                         \
+    }                                                                         \
+    free(argv2);                                                              \
+    return (T);                                                               \
   }
 
-def_rosconsole_formatter(ROSEUS_ROSDEBUG, RCUTILS_LOG_SEVERITY_DEBUG)
-def_rosconsole_formatter(ROSEUS_ROSINFO,  RCUTILS_LOG_SEVERITY_INFO)
-def_rosconsole_formatter(ROSEUS_ROSWARN,  RCUTILS_LOG_SEVERITY_WARN)
-def_rosconsole_formatter(ROSEUS_ROSERROR, RCUTILS_LOG_SEVERITY_ERROR)
-def_rosconsole_formatter(ROSEUS_ROSFATAL, RCUTILS_LOG_SEVERITY_FATAL)
+def_rosconsole_formatter(ROSEUS_ROSDEBUG, RCUTILS_LOG_SEVERITY_DEBUG);
+def_rosconsole_formatter(ROSEUS_ROSINFO, RCUTILS_LOG_SEVERITY_INFO);
+def_rosconsole_formatter(ROSEUS_ROSWARN, RCUTILS_LOG_SEVERITY_WARN);
+def_rosconsole_formatter(ROSEUS_ROSERROR, RCUTILS_LOG_SEVERITY_ERROR);
+def_rosconsole_formatter(ROSEUS_ROSFATAL, RCUTILS_LOG_SEVERITY_FATAL);
 
-pointer ROSEUS_SET_LOGGER_LEVEL(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_SET_LOGGER_LEVEL(register context* ctx, int n, pointer* argv) {
   ckarg(2);
   string logger;
-  if (isstring(argv[0])) logger.assign((char *)get_string(argv[0]));
+  if (isstring(argv[0])) logger.assign((char*)get_string(argv[0]));
   else error(E_NOSTRING);
   int log_level = intval(argv[1]);
 
   rcutils_ret_t ret;
   switch (log_level) {
-  case 1:
-    ret = rcutils_logging_set_logger_level(logger.c_str(), RCUTILS_LOG_SEVERITY_DEBUG);
-    break;
-  case 2:
-    ret = rcutils_logging_set_logger_level(logger.c_str(), RCUTILS_LOG_SEVERITY_INFO);
-    break;
-  case 3:
-    ret = rcutils_logging_set_logger_level(logger.c_str(), RCUTILS_LOG_SEVERITY_WARN);
-    break;
-  case 4:
-    ret = rcutils_logging_set_logger_level(logger.c_str(), RCUTILS_LOG_SEVERITY_ERROR);
-    break;
-  case 5:
-    ret = rcutils_logging_set_logger_level(logger.c_str(), RCUTILS_LOG_SEVERITY_FATAL);
-    break;
-  default:
-    return (NIL);
+    case 1:
+      ret = rcutils_logging_set_logger_level(logger.c_str(), RCUTILS_LOG_SEVERITY_DEBUG);
+      break;
+    case 2:
+      ret = rcutils_logging_set_logger_level(logger.c_str(), RCUTILS_LOG_SEVERITY_INFO);
+      break;
+    case 3:
+      ret = rcutils_logging_set_logger_level(logger.c_str(), RCUTILS_LOG_SEVERITY_WARN);
+      break;
+    case 4:
+      ret = rcutils_logging_set_logger_level(logger.c_str(), RCUTILS_LOG_SEVERITY_ERROR);
+      break;
+    case 5:
+      ret = rcutils_logging_set_logger_level(logger.c_str(), RCUTILS_LOG_SEVERITY_FATAL);
+      break;
+    default:
+      return (NIL);
   }
 
   return (ret == RCUTILS_RET_OK) ? T : NIL;
 }
 
-pointer ROSEUS_EXIT(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_EXIT(register context* ctx, int n, pointer* argv) {
   if (s_bInstalled) {
     RCLCPP_INFO(s_node->get_logger(), "exiting roseus %ld", (n == 0) ? 0L : (long)ckintval(argv[0]));
     s_mapAdvertised.clear();
@@ -634,8 +621,7 @@ pointer ROSEUS_EXIT(register context *ctx, int n, pointer *argv)
  *   Publisher / Subscriber
  ************************************************************/
 
-pointer ROSEUS_ADVERTISE(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ADVERTISE(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   string topicname;
   pointer message;
@@ -643,7 +629,7 @@ pointer ROSEUS_ADVERTISE(register context *ctx, int n, pointer *argv)
   bool latch = false;
 
   ckarg2(2, 4);
-  if (isstring(argv[0])) topicname = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) topicname = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   message = argv[1];
@@ -680,25 +666,23 @@ pointer ROSEUS_ADVERTISE(register context *ctx, int n, pointer *argv)
   return (T);
 }
 
-pointer ROSEUS_UNADVERTISE(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_UNADVERTISE(register context* ctx, int n, pointer* argv) {
   string topicname;
   ckarg(1);
-  if (isstring(argv[0])) topicname = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) topicname = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   bool bSuccess = s_mapAdvertised.erase(topicname) > 0;
   return (bSuccess ? T : NIL);
 }
 
-pointer ROSEUS_PUBLISH(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_PUBLISH(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   string topicname;
   pointer emessage;
 
   ckarg(2);
-  if (isstring(argv[0])) topicname = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) topicname = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   emessage = argv[1];
@@ -722,8 +706,7 @@ pointer ROSEUS_PUBLISH(register context *ctx, int n, pointer *argv)
   return (T);
 }
 
-pointer ROSEUS_SUBSCRIBE(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_SUBSCRIBE(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   string topicname;
   pointer message, fncallback, args;
@@ -732,14 +715,14 @@ pointer ROSEUS_SUBSCRIBE(register context *ctx, int n, pointer *argv)
 
   // arguments:
   // topicname message_type callbackfunc args0 ... argsN [ queuesize ] [ :groupname groupname ]
-  if (isstring(argv[0])) topicname = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) topicname = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   // Parse trailing keyword arguments
-  if (n > 1 && issymbol(argv[n-2]) && isstring(argv[n-1])) {
-    if (argv[n-2] == K_ROSEUS_GROUPNAME) {
+  if (n > 1 && issymbol(argv[n - 2]) && isstring(argv[n - 1])) {
+    if (argv[n - 2] == K_ROSEUS_GROUPNAME) {
       string groupname;
-      groupname.assign((char *)get_string(argv[n-1]));
+      groupname.assign((char*)get_string(argv[n - 1]));
       auto it = s_mapCallbackGroup.find(groupname);
       if (it != s_mapCallbackGroup.end()) {
         RCLCPP_DEBUG(s_node->get_logger(), "subscribe with groupname=%s", groupname.c_str());
@@ -754,7 +737,10 @@ pointer ROSEUS_SUBSCRIBE(register context *ctx, int n, pointer *argv)
       n -= 2;
     }
   }
-  if (isint(argv[n-1])) { queuesize = ckintval(argv[n-1]); n--; }
+  if (isint(argv[n - 1])) {
+    queuesize = ckintval(argv[n - 1]);
+    n--;
+  }
   RCLCPP_DEBUG(s_node->get_logger(), "subscribe %s queuesize=%d", topicname.c_str(), queuesize);
 
   message = argv[1];
@@ -785,45 +771,50 @@ pointer ROSEUS_SUBSCRIBE(register context *ctx, int n, pointer *argv)
   // Create a generic subscription with CDR callback
   // We capture scb, args, and message (class template) for the callback
   auto sub = s_node->create_generic_subscription(
-    topicname, datatype, qos,
-    [scb, args, message](std::shared_ptr<const rclcpp::SerializedMessage> serialized_msg) {
-      context *ctx = current_ctx;
-      if (ctx != euscontexts[0]) {
-        RCLCPP_WARN(rclcpp::get_logger("roseus"), "ctx is not correct %ld", (long)thr_self());
-      }
+      topicname, datatype, qos,
+      [scb, args, message](std::shared_ptr<const rclcpp::SerializedMessage> serialized_msg) {
+        context* ctx = current_ctx;
+        if (ctx != euscontexts[0]) {
+          RCLCPP_WARN(rclcpp::get_logger("roseus"), "ctx is not correct %ld", (long)thr_self());
+        }
 
-      // Create new instance of the message class
-      pointer msg_instance;
-      vpush(message);
-      if (isclass(message)) {
-        msg_instance = makeobject(message);
+        // Create new instance of the message class
+        pointer msg_instance;
+        vpush(message);
+        if (isclass(message)) {
+          msg_instance = makeobject(message);
+          vpush(msg_instance);
+          csend(ctx, msg_instance, K_ROSEUS_INIT, 0);
+          vpop();  // msg_instance
+        } else {
+          RCLCPP_WARN(rclcpp::get_logger("roseus"), "message template must be class");
+          msg_instance = message;
+        }
+        vpop();  // message
+
+        // Deserialize CDR into the EusLisp message
+        deserializeEusMessage(msg_instance, serialized_msg);
+
+        // Call the EusLisp callback function
+        pointer argp = args;
+        int argc = 0;
         vpush(msg_instance);
-        csend(ctx, msg_instance, K_ROSEUS_INIT, 0);
-        vpop(); // msg_instance
-      } else {
-        RCLCPP_WARN(rclcpp::get_logger("roseus"), "message template must be class");
-        msg_instance = message;
-      }
-      vpop(); // message
+        while (argp != NIL) {
+          ckpush(ccar(argp));
+          argp = ccdr(argp);
+          argc++;
+        }
+        vpush(msg_instance);
+        argc++;
 
-      // Deserialize CDR into the EusLisp message
-      deserializeEusMessage(msg_instance, serialized_msg);
+        ufuncall(ctx, (ctx->callfp ? ctx->callfp->form : NIL),
+                 scb, (pointer)(ctx->vsp - argc), NULL, argc);
+        while (argc-- > 0) vpop();
+        vpop();  // msg_instance
+      },
+      sub_options);
 
-      // Call the EusLisp callback function
-      pointer argp = args;
-      int argc = 0;
-      vpush(msg_instance);
-      while (argp != NIL) { ckpush(ccar(argp)); argp = ccdr(argp); argc++; }
-      vpush(msg_instance); argc++;
-
-      ufuncall(ctx, (ctx->callfp ? ctx->callfp->form : NIL),
-               scb, (pointer)(ctx->vsp - argc), NULL, argc);
-      while (argc-- > 0) vpop();
-      vpop(); // msg_instance
-    },
-    sub_options);
-
-  vpop(); // message
+  vpop();  // message
 
   if (sub) {
     s_mapSubscribed[topicname] = sub;
@@ -834,35 +825,32 @@ pointer ROSEUS_SUBSCRIBE(register context *ctx, int n, pointer *argv)
   return (T);
 }
 
-pointer ROSEUS_UNSUBSCRIBE(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_UNSUBSCRIBE(register context* ctx, int n, pointer* argv) {
   string topicname;
   ckarg(1);
-  if (isstring(argv[0])) topicname = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) topicname = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   bool bSuccess = s_mapSubscribed.erase(topicname) > 0;
   return (bSuccess ? T : NIL);
 }
 
-pointer ROSEUS_GETNUMPUBLISHERS(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_GETNUMPUBLISHERS(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   string topicname;
   ckarg(1);
-  if (isstring(argv[0])) topicname = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) topicname = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   size_t count = s_node->count_publishers(topicname);
   return makeint(count);
 }
 
-pointer ROSEUS_GETNUMSUBSCRIBERS(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_GETNUMSUBSCRIBERS(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   string topicname;
   ckarg(1);
-  if (isstring(argv[0])) topicname = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) topicname = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   size_t count = s_node->count_subscribers(topicname);
@@ -873,14 +861,13 @@ pointer ROSEUS_GETNUMSUBSCRIBERS(register context *ctx, int n, pointer *argv)
  *   Service
  ************************************************************/
 
-pointer ROSEUS_WAIT_FOR_SERVICE(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_WAIT_FOR_SERVICE(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   string service;
   numunion nu;
 
   ckarg2(1, 2);
-  if (isstring(argv[0])) service = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) service = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   float timeout = -1;
@@ -892,7 +879,7 @@ pointer ROSEUS_WAIT_FOR_SERVICE(register context *ctx, int n, pointer *argv)
   auto start = std::chrono::steady_clock::now();
   while (true) {
     auto names_and_types = s_node->get_service_names_and_types();
-    for (const auto &entry : names_and_types) {
+    for (const auto& entry : names_and_types) {
       if (entry.first == service) {
         return (T);
       }
@@ -911,16 +898,15 @@ pointer ROSEUS_WAIT_FOR_SERVICE(register context *ctx, int n, pointer *argv)
   return (NIL);
 }
 
-pointer ROSEUS_SERVICE_EXISTS(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_SERVICE_EXISTS(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   string service;
   ckarg(1);
-  if (isstring(argv[0])) service = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) service = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   auto names_and_types = s_node->get_service_names_and_types();
-  for (const auto &entry : names_and_types) {
+  for (const auto& entry : names_and_types) {
     if (entry.first == service) {
       return (T);
     }
@@ -928,15 +914,14 @@ pointer ROSEUS_SERVICE_EXISTS(register context *ctx, int n, pointer *argv)
   return (NIL);
 }
 
-pointer ROSEUS_SERVICE_CALL(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_SERVICE_CALL(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   string service;
   pointer emessage;
   bool persist = false;
 
   ckarg2(2, 3);
-  if (isstring(argv[0])) service = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) service = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
   emessage = argv[1];
   if (n > 2) {
@@ -977,23 +962,23 @@ pointer ROSEUS_SERVICE_CALL(register context *ctx, int n, pointer *argv)
   // Wait for service
   if (!client->wait_for_service(std::chrono::seconds(5))) {
     RCLCPP_ERROR(s_node->get_logger(), "service %s not available", service.c_str());
-    vpop(); // response
-    vpop(); // emessage
+    vpop();  // response
+    vpop();  // emessage
     return (NIL);
   }
 
   // Get type support for rmw_serialize/rmw_deserialize
   auto ts_lib = rclcpp::get_typesupport_library(datatype, "rosidl_typesupport_cpp");
   auto srv_ts = rclcpp::get_service_typesupport_handle(
-    datatype, "rosidl_typesupport_cpp", *ts_lib);
+      datatype, "rosidl_typesupport_cpp", *ts_lib);
 
   // Get introspection type support for C struct allocation
   auto intro_lib = rclcpp::get_typesupport_library(
-    datatype, "rosidl_typesupport_introspection_cpp");
+      datatype, "rosidl_typesupport_introspection_cpp");
   auto intro_ts = rclcpp::get_service_typesupport_handle(
-    datatype, "rosidl_typesupport_introspection_cpp", *intro_lib);
+      datatype, "rosidl_typesupport_introspection_cpp", *intro_lib);
   auto svc_members = static_cast<
-    const rosidl_typesupport_introspection_cpp::ServiceMembers *>(intro_ts->data);
+      const rosidl_typesupport_introspection_cpp::ServiceMembers*>(intro_ts->data);
 
   // Serialize EusLisp request to CDR
   rclcpp::SerializedMessage serialized_req = serializeEusMessage(emessage);
@@ -1002,19 +987,19 @@ pointer ROSEUS_SERVICE_CALL(register context *ctx, int n, pointer *argv)
   auto req_members = svc_members->request_members_;
   std::vector<uint8_t> req_buf(req_members->size_of_, 0);
   req_members->init_function(
-    req_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
+      req_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
 
   rmw_ret_t rmw_rc = rmw_deserialize(
-    &serialized_req.get_rcl_serialized_message(),
-    srv_ts->request_typesupport,
-    req_buf.data());
+      &serialized_req.get_rcl_serialized_message(),
+      srv_ts->request_typesupport,
+      req_buf.data());
 
   if (rmw_rc != RMW_RET_OK) {
     RCLCPP_ERROR(s_node->get_logger(),
                  "failed to deserialize request for service %s", service.c_str());
     req_members->fini_function(req_buf.data());
-    vpop(); // response
-    vpop(); // emessage
+    vpop();  // response
+    vpop();  // emessage
     return (NIL);
   }
 
@@ -1023,15 +1008,15 @@ pointer ROSEUS_SERVICE_CALL(register context *ctx, int n, pointer *argv)
 
   // Spin until we get a response
   auto ret_code = s_executor->spin_until_future_complete(
-    future_and_id, std::chrono::seconds(30));
+      future_and_id, std::chrono::seconds(30));
 
   if (ret_code != rclcpp::FutureReturnCode::SUCCESS) {
     RCLCPP_ERROR(s_node->get_logger(),
                  "service call to %s failed or timed out", service.c_str());
     client->remove_pending_request(future_and_id.request_id);
     req_members->fini_function(req_buf.data());
-    vpop(); // response
-    vpop(); // emessage
+    vpop();  // response
+    vpop();  // emessage
     return (NIL);
   }
 
@@ -1045,13 +1030,13 @@ pointer ROSEUS_SERVICE_CALL(register context *ctx, int n, pointer *argv)
     rmw_serialized_message_init(&resp_serialized, 256, &allocator);
 
     rmw_rc = rmw_serialize(
-      raw_response.get(), srv_ts->response_typesupport, &resp_serialized);
+        raw_response.get(), srv_ts->response_typesupport, &resp_serialized);
 
     if (rmw_rc == RMW_RET_OK) {
       // Wrap in SerializedMessage for deserializeEusMessage
       auto serialized_resp = std::make_shared<rclcpp::SerializedMessage>(
-        resp_serialized.buffer_length);
-      auto &rcl_msg = serialized_resp->get_rcl_serialized_message();
+          resp_serialized.buffer_length);
+      auto& rcl_msg = serialized_resp->get_rcl_serialized_message();
       memcpy(rcl_msg.buffer, resp_serialized.buffer, resp_serialized.buffer_length);
       rcl_msg.buffer_length = resp_serialized.buffer_length;
 
@@ -1066,30 +1051,29 @@ pointer ROSEUS_SERVICE_CALL(register context *ctx, int n, pointer *argv)
   }
 
   req_members->fini_function(req_buf.data());
-  vpop(); // response
-  vpop(); // emessage
+  vpop();  // response
+  vpop();  // emessage
 
   return (response);
 }
 
-pointer ROSEUS_ADVERTISE_SERVICE(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ADVERTISE_SERVICE(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   string service;
   pointer emessage;
   pointer fncallback, args;
   rclcpp::CallbackGroup::SharedPtr cbg = nullptr;
 
-  if (isstring(argv[0])) service = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) service = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
   emessage = argv[1];
   fncallback = argv[2];
 
   // Parse trailing keyword arguments
-  if (n >= 5 && issymbol(argv[n-2]) && isstring(argv[n-1])) {
-    if (argv[n-2] == K_ROSEUS_GROUPNAME) {
+  if (n >= 5 && issymbol(argv[n - 2]) && isstring(argv[n - 1])) {
+    if (argv[n - 2] == K_ROSEUS_GROUPNAME) {
       string groupname;
-      groupname.assign((char *)get_string(argv[n-1]));
+      groupname.assign((char*)get_string(argv[n - 1]));
       auto it = s_mapCallbackGroup.find(groupname);
       if (it != s_mapCallbackGroup.end()) {
         RCLCPP_DEBUG(s_node->get_logger(), "advertising service with groupname=%s",
@@ -1121,7 +1105,7 @@ pointer ROSEUS_ADVERTISE_SERVICE(register context *ctx, int n, pointer *argv)
   vpush(emessage);
   pointer request_class = csend(ctx, emessage, K_ROSEUS_GET, 1, K_ROSEUS_REQUEST);
   pointer response_class = csend(ctx, emessage, K_ROSEUS_GET, 1, K_ROSEUS_RESPONSE);
-  vpop(); // emessage
+  vpop();  // emessage
 
   pointer scb = resolveCallback(ctx, fncallback);
   protectCallback(ctx, fncallback, args);
@@ -1133,192 +1117,197 @@ pointer ROSEUS_ADVERTISE_SERVICE(register context *ctx, int n, pointer *argv)
   // Get type support for rmw_serialize/rmw_deserialize
   auto ts_lib = rclcpp::get_typesupport_library(datatype, "rosidl_typesupport_cpp");
   auto srv_ts = rclcpp::get_service_typesupport_handle(
-    datatype, "rosidl_typesupport_cpp", *ts_lib);
+      datatype, "rosidl_typesupport_cpp", *ts_lib);
 
   // Get introspection type support for C struct allocation
   auto intro_lib = rclcpp::get_typesupport_library(
-    datatype, "rosidl_typesupport_introspection_cpp");
+      datatype, "rosidl_typesupport_introspection_cpp");
   auto intro_ts = rclcpp::get_service_typesupport_handle(
-    datatype, "rosidl_typesupport_introspection_cpp", *intro_lib);
+      datatype, "rosidl_typesupport_introspection_cpp", *intro_lib);
   auto svc_members = static_cast<
-    const rosidl_typesupport_introspection_cpp::ServiceMembers *>(intro_ts->data);
+      const rosidl_typesupport_introspection_cpp::ServiceMembers*>(intro_ts->data);
 
   // Use rcl layer for generic service handling
   auto srv_node = s_node->get_node_base_interface();
 
-  rcl_service_t *rcl_srv = new rcl_service_t();
+  rcl_service_t* rcl_srv = new rcl_service_t();
   *rcl_srv = rcl_get_zero_initialized_service();
 
   rcl_service_options_t srv_options = rcl_service_get_default_options();
 
   rcl_ret_t rc = rcl_service_init(
-    rcl_srv,
-    srv_node->get_rcl_node_handle(),
-    srv_ts,
-    service.c_str(),
-    &srv_options);
+      rcl_srv,
+      srv_node->get_rcl_node_handle(),
+      srv_ts,
+      service.c_str(),
+      &srv_options);
 
   if (rc != RCL_RET_OK) {
     RCLCPP_ERROR(s_node->get_logger(), "failed to create service %s: %s",
                  service.c_str(), rcl_get_error_string().str);
     rcl_reset_error();
     delete rcl_srv;
-    vpop(); // response_class
-    vpop(); // request_class
+    vpop();  // response_class
+    vpop();  // request_class
     return (NIL);
   }
 
   auto srv_shared = std::shared_ptr<rcl_service_t>(rcl_srv,
-    [srv_node](rcl_service_t *srv) {
-      (void)rcl_service_fini(srv, srv_node->get_rcl_node_handle());
-      delete srv;
-    });
+                                                   [srv_node](rcl_service_t* srv) {
+                                                     (void)rcl_service_fini(srv, srv_node->get_rcl_node_handle());
+                                                     delete srv;
+                                                   });
 
   // Poll for incoming requests via a wall timer
   auto timer = s_node->create_wall_timer(
-    std::chrono::milliseconds(1),
-    [srv_shared, ts_lib, intro_lib, srv_ts, svc_members,
-     scb, args, request_class, response_class, service]() {
-      context *ctx = current_ctx;
-      auto req_members = svc_members->request_members_;
-      auto resp_members = svc_members->response_members_;
+      std::chrono::milliseconds(1),
+      [srv_shared, ts_lib, intro_lib, srv_ts, svc_members,
+       scb, args, request_class, response_class, service]() {
+        context* ctx = current_ctx;
+        auto req_members = svc_members->request_members_;
+        auto resp_members = svc_members->response_members_;
 
-      // Allocate C struct for request
-      std::vector<uint8_t> req_buf(req_members->size_of_, 0);
-      req_members->init_function(
-        req_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
+        // Allocate C struct for request
+        std::vector<uint8_t> req_buf(req_members->size_of_, 0);
+        req_members->init_function(
+            req_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
 
-      rmw_service_info_t request_header;
-      memset(&request_header, 0, sizeof(request_header));
+        rmw_service_info_t request_header;
+        memset(&request_header, 0, sizeof(request_header));
 
-      rcl_ret_t rc = rcl_take_request_with_info(
-        srv_shared.get(), &request_header, req_buf.data());
+        rcl_ret_t rc = rcl_take_request_with_info(
+            srv_shared.get(), &request_header, req_buf.data());
 
-      if (rc == RCL_RET_OK) {
-        // C struct request → CDR
-        rcl_serialized_message_t serialized_req_buf =
-          rmw_get_zero_initialized_serialized_message();
-        rcutils_allocator_t allocator = rcutils_get_default_allocator();
-        rmw_serialized_message_init(&serialized_req_buf, 256, &allocator);
+        if (rc == RCL_RET_OK) {
+          // C struct request → CDR
+          rcl_serialized_message_t serialized_req_buf =
+              rmw_get_zero_initialized_serialized_message();
+          rcutils_allocator_t allocator = rcutils_get_default_allocator();
+          rmw_serialized_message_init(&serialized_req_buf, 256, &allocator);
 
-        rmw_ret_t rmw_rc = rmw_serialize(
-          req_buf.data(), srv_ts->request_typesupport, &serialized_req_buf);
+          rmw_ret_t rmw_rc = rmw_serialize(
+              req_buf.data(), srv_ts->request_typesupport, &serialized_req_buf);
 
-        if (rmw_rc != RMW_RET_OK) {
-          RCLCPP_ERROR(rclcpp::get_logger("roseus"),
-                       "service %s: failed to serialize request to CDR", service.c_str());
+          if (rmw_rc != RMW_RET_OK) {
+            RCLCPP_ERROR(rclcpp::get_logger("roseus"),
+                         "service %s: failed to serialize request to CDR", service.c_str());
+            rmw_serialized_message_fini(&serialized_req_buf);
+            req_members->fini_function(req_buf.data());
+            return;
+          }
+
+          // Create EusLisp request instance and deserialize CDR into it
+          pointer req_instance = makeobject(
+              isclass(request_class) ? request_class : classof(request_class));
+          vpush(req_instance);
+          csend(ctx, req_instance, K_ROSEUS_INIT, 0);
+
+          auto sm = std::make_shared<rclcpp::SerializedMessage>(
+              serialized_req_buf.buffer_length);
+          auto& rcl_msg = sm->get_rcl_serialized_message();
+          memcpy(rcl_msg.buffer, serialized_req_buf.buffer,
+                 serialized_req_buf.buffer_length);
+          rcl_msg.buffer_length = serialized_req_buf.buffer_length;
           rmw_serialized_message_fini(&serialized_req_buf);
-          req_members->fini_function(req_buf.data());
-          return;
-        }
 
-        // Create EusLisp request instance and deserialize CDR into it
-        pointer req_instance = makeobject(
-          isclass(request_class) ? request_class : classof(request_class));
-        vpush(req_instance);
-        csend(ctx, req_instance, K_ROSEUS_INIT, 0);
+          deserializeEusMessage(req_instance, sm);
 
-        auto sm = std::make_shared<rclcpp::SerializedMessage>(
-          serialized_req_buf.buffer_length);
-        auto &rcl_msg = sm->get_rcl_serialized_message();
-        memcpy(rcl_msg.buffer, serialized_req_buf.buffer,
-               serialized_req_buf.buffer_length);
-        rcl_msg.buffer_length = serialized_req_buf.buffer_length;
-        rmw_serialized_message_fini(&serialized_req_buf);
+          // Call EusLisp callback: (funcall callback request ...args)
+          // Callback should return response instance
+          if (!(issymbol(scb) || piscode(scb) || ccar(scb) == LAMCLOSURE)) {
+            RCLCPP_ERROR(rclcpp::get_logger("roseus"),
+                         "can't find service callback function");
+            vpop();  // req_instance
+            req_members->fini_function(req_buf.data());
+            return;
+          }
 
-        deserializeEusMessage(req_instance, sm);
+          pointer argp = args;
+          int argc = 0;
+          while (argp != NIL) {
+            ckpush(ccar(argp));
+            argp = ccdr(argp);
+            argc++;
+          }
+          ckpush(req_instance);
+          argc++;
 
-        // Call EusLisp callback: (funcall callback request ...args)
-        // Callback should return response instance
-        if (!(issymbol(scb) || piscode(scb) || ccar(scb) == LAMCLOSURE)) {
-          RCLCPP_ERROR(rclcpp::get_logger("roseus"),
-                       "can't find service callback function");
-          vpop(); // req_instance
-          req_members->fini_function(req_buf.data());
-          return;
-        }
+          pointer eus_response = ufuncall(
+              ctx, (ctx->callfp ? ctx->callfp->form : NIL),
+              scb, (pointer)(ctx->vsp - argc), NULL, argc);
+          while (argc-- > 0) vpop();
+          vpush(eus_response);
 
-        pointer argp = args;
-        int argc = 0;
-        while (argp != NIL) { ckpush(ccar(argp)); argp = ccdr(argp); argc++; }
-        ckpush(req_instance); argc++;
+          // Check if callback returned a valid response (must be a message with :serialize-cdr)
+          pointer resp_curclass;
+          if (eus_response == NIL || !ispointer(eus_response) ||
+              (pointer)findmethod(ctx, K_ROSEUS_SERIALIZE_CDR,
+                                  classof(eus_response), &resp_curclass) == NIL) {
+            RCLCPP_WARN(rclcpp::get_logger("roseus"),
+                        "service %s: callback did not return a valid response object, "
+                        "sending default response",
+                        service.c_str());
+            // Send default (zero-initialized) response
+            std::vector<uint8_t> resp_buf(resp_members->size_of_, 0);
+            resp_members->init_function(
+                resp_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
+            rcl_send_response(
+                srv_shared.get(), &request_header.request_id, resp_buf.data());
+            resp_members->fini_function(resp_buf.data());
+            vpop();  // eus_response
+            vpop();  // req_instance
+            req_members->fini_function(req_buf.data());
+            return;
+          }
 
-        pointer eus_response = ufuncall(
-          ctx, (ctx->callfp ? ctx->callfp->form : NIL),
-          scb, (pointer)(ctx->vsp - argc), NULL, argc);
-        while (argc-- > 0) vpop();
-        vpush(eus_response);
+          // Serialize EusLisp response to CDR
+          rclcpp::SerializedMessage resp_cdr = serializeEusMessage(eus_response);
 
-        // Check if callback returned a valid response (must be a message with :serialize-cdr)
-        pointer resp_curclass;
-        if (eus_response == NIL || !ispointer(eus_response) ||
-            (pointer)findmethod(ctx, K_ROSEUS_SERIALIZE_CDR,
-                                classof(eus_response), &resp_curclass) == NIL) {
-          RCLCPP_WARN(rclcpp::get_logger("roseus"),
-                      "service %s: callback did not return a valid response object, "
-                      "sending default response", service.c_str());
-          // Send default (zero-initialized) response
+          // CDR → C struct for response
           std::vector<uint8_t> resp_buf(resp_members->size_of_, 0);
           resp_members->init_function(
-            resp_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
-          rcl_send_response(
-            srv_shared.get(), &request_header.request_id, resp_buf.data());
-          resp_members->fini_function(resp_buf.data());
-          vpop(); // eus_response
-          vpop(); // req_instance
-          req_members->fini_function(req_buf.data());
-          return;
-        }
+              resp_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
 
-        // Serialize EusLisp response to CDR
-        rclcpp::SerializedMessage resp_cdr = serializeEusMessage(eus_response);
+          rmw_rc = rmw_deserialize(
+              &resp_cdr.get_rcl_serialized_message(),
+              srv_ts->response_typesupport,
+              resp_buf.data());
 
-        // CDR → C struct for response
-        std::vector<uint8_t> resp_buf(resp_members->size_of_, 0);
-        resp_members->init_function(
-          resp_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
-
-        rmw_rc = rmw_deserialize(
-          &resp_cdr.get_rcl_serialized_message(),
-          srv_ts->response_typesupport,
-          resp_buf.data());
-
-        if (rmw_rc == RMW_RET_OK) {
-          rcl_ret_t send_rc = rcl_send_response(
-            srv_shared.get(), &request_header.request_id, resp_buf.data());
-          if (send_rc != RCL_RET_OK) {
+          if (rmw_rc == RMW_RET_OK) {
+            rcl_ret_t send_rc = rcl_send_response(
+                srv_shared.get(), &request_header.request_id, resp_buf.data());
+            if (send_rc != RCL_RET_OK) {
+              RCLCPP_ERROR(rclcpp::get_logger("roseus"),
+                           "service %s: failed to send response: %s",
+                           service.c_str(), rcl_get_error_string().str);
+              rcl_reset_error();
+            }
+          } else {
             RCLCPP_ERROR(rclcpp::get_logger("roseus"),
-                         "service %s: failed to send response: %s",
-                         service.c_str(), rcl_get_error_string().str);
-            rcl_reset_error();
+                         "service %s: failed to deserialize response CDR",
+                         service.c_str());
           }
-        } else {
-          RCLCPP_ERROR(rclcpp::get_logger("roseus"),
-                       "service %s: failed to deserialize response CDR",
-                       service.c_str());
+
+          resp_members->fini_function(resp_buf.data());
+          vpop();  // eus_response
+          vpop();  // req_instance
         }
 
-        resp_members->fini_function(resp_buf.data());
-        vpop(); // eus_response
-        vpop(); // req_instance
-      }
-
-      req_members->fini_function(req_buf.data());
-    });
+        req_members->fini_function(req_buf.data());
+      });
 
   s_mapTimered["__srv__" + service] = timer;
 
-  vpop(); // response_class
-  vpop(); // request_class
+  vpop();  // response_class
+  vpop();  // request_class
 
   return (T);
 }
 
-pointer ROSEUS_UNADVERTISE_SERVICE(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_UNADVERTISE_SERVICE(register context* ctx, int n, pointer* argv) {
   string service;
   ckarg(1);
-  if (isstring(argv[0])) service = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) service = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   RCLCPP_DEBUG(rclcpp::get_logger("roseus"), "unadvertise-service %s", service.c_str());
@@ -1334,21 +1323,20 @@ pointer ROSEUS_UNADVERTISE_SERVICE(register context *ctx, int n, pointer *argv)
  *   Parameters
  ************************************************************/
 
-pointer ROSEUS_SET_PARAM(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_SET_PARAM(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   string key;
   numunion nu;
 
   ckarg(2);
-  if (isstring(argv[0])) key.assign((char *)get_string(argv[0]));
+  if (isstring(argv[0])) key.assign((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   // Declare parameter if not already declared
   if (!s_node->has_parameter(key)) {
     // Determine type from EusLisp value
     if (isstring(argv[1])) {
-      s_node->declare_parameter<string>(key, string((char *)get_string(argv[1])));
+      s_node->declare_parameter<string>(key, string((char*)get_string(argv[1])));
     } else if (isint(argv[1])) {
       s_node->declare_parameter<int64_t>(key, (int64_t)intval(argv[1]));
     } else if (isflt(argv[1])) {
@@ -1363,17 +1351,17 @@ pointer ROSEUS_SET_PARAM(register context *ctx, int n, pointer *argv)
       pointer dest = (pointer)mkstream(ctx, K_OUT, makebuffer(256));
       vpush(dest);
       prinx(ctx, argv[1], dest);
-      pointer str = makestring((char *)dest->c.stream.buffer->c.str.chars,
+      pointer str = makestring((char*)dest->c.stream.buffer->c.str.chars,
                                intval(dest->c.stream.count));
-      vpop(); // dest
-      s_node->declare_parameter<string>(key, string((char *)get_string(str)));
+      vpop();  // dest
+      s_node->declare_parameter<string>(key, string((char*)get_string(str)));
     } else {
       s_node->declare_parameter(key, rclcpp::ParameterValue());
     }
   } else {
     // Set existing parameter
     if (isstring(argv[1])) {
-      s_node->set_parameter(rclcpp::Parameter(key, string((char *)get_string(argv[1]))));
+      s_node->set_parameter(rclcpp::Parameter(key, string((char*)get_string(argv[1]))));
     } else if (isint(argv[1])) {
       s_node->set_parameter(rclcpp::Parameter(key, (int64_t)intval(argv[1])));
     } else if (isflt(argv[1])) {
@@ -1388,14 +1376,13 @@ pointer ROSEUS_SET_PARAM(register context *ctx, int n, pointer *argv)
   return (T);
 }
 
-pointer ROSEUS_GET_PARAM(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_GET_PARAM(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   numunion nu;
   string key;
 
   ckarg2(1, 2);
-  if (isstring(argv[0])) key.assign((char *)get_string(argv[0]));
+  if (isstring(argv[0])) key.assign((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   if (!s_node->has_parameter(key)) {
@@ -1411,67 +1398,61 @@ pointer ROSEUS_GET_PARAM(register context *ctx, int n, pointer *argv)
   pointer ret = NIL;
 
   switch (param.get_type()) {
-  case rclcpp::ParameterType::PARAMETER_BOOL:
-    ret = param.as_bool() ? T : NIL;
-    break;
-  case rclcpp::ParameterType::PARAMETER_INTEGER:
-    ret = makeint(param.as_int());
-    break;
-  case rclcpp::ParameterType::PARAMETER_DOUBLE:
-    ret = makeflt(param.as_double());
-    break;
-  case rclcpp::ParameterType::PARAMETER_STRING:
-    {
+    case rclcpp::ParameterType::PARAMETER_BOOL:
+      ret = param.as_bool() ? T : NIL;
+      break;
+    case rclcpp::ParameterType::PARAMETER_INTEGER:
+      ret = makeint(param.as_int());
+      break;
+    case rclcpp::ParameterType::PARAMETER_DOUBLE:
+      ret = makeflt(param.as_double());
+      break;
+    case rclcpp::ParameterType::PARAMETER_STRING: {
       string s = param.as_string();
-      ret = makestring((char *)s.c_str(), s.length());
-    }
-    break;
-  case rclcpp::ParameterType::PARAMETER_BYTE_ARRAY:
-  case rclcpp::ParameterType::PARAMETER_BOOL_ARRAY:
-  case rclcpp::ParameterType::PARAMETER_INTEGER_ARRAY:
-  case rclcpp::ParameterType::PARAMETER_DOUBLE_ARRAY:
-  case rclcpp::ParameterType::PARAMETER_STRING_ARRAY:
-    {
+      ret = makestring((char*)s.c_str(), s.length());
+    } break;
+    case rclcpp::ParameterType::PARAMETER_BYTE_ARRAY:
+    case rclcpp::ParameterType::PARAMETER_BOOL_ARRAY:
+    case rclcpp::ParameterType::PARAMETER_INTEGER_ARRAY:
+    case rclcpp::ParameterType::PARAMETER_DOUBLE_ARRAY:
+    case rclcpp::ParameterType::PARAMETER_STRING_ARRAY: {
       // Convert arrays to EusLisp lists
       string s = param.value_to_string();
-      ret = makestring((char *)s.c_str(), s.length());
-    }
-    break;
-  default:
-    if (n == 2) {
-      ret = COPYOBJ(ctx, 1, argv + 1);
-    } else {
-      ret = NIL;
-    }
-    break;
+      ret = makestring((char*)s.c_str(), s.length());
+    } break;
+    default:
+      if (n == 2) {
+        ret = COPYOBJ(ctx, 1, argv + 1);
+      } else {
+        ret = NIL;
+      }
+      break;
   }
 
   return ret;
 }
 
-pointer ROSEUS_HAS_PARAM(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_HAS_PARAM(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   string key;
   ckarg(1);
-  if (isstring(argv[0])) key.assign((char *)get_string(argv[0]));
+  if (isstring(argv[0])) key.assign((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   return (s_node->has_parameter(key)) ? T : NIL;
 }
 
-pointer ROSEUS_DELETE_PARAM(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_DELETE_PARAM(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   string key;
   ckarg(1);
-  if (isstring(argv[0])) key.assign((char *)get_string(argv[0]));
+  if (isstring(argv[0])) key.assign((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   try {
     s_node->undeclare_parameter(key);
     return (T);
-  } catch (const std::exception &e) {
+  } catch (const std::exception& e) {
     RCLCPP_ERROR(s_node->get_logger(), "Failed to delete parameter %s: %s", key.c_str(), e.what());
     return (NIL);
   }
@@ -1481,34 +1462,30 @@ pointer ROSEUS_DELETE_PARAM(register context *ctx, int n, pointer *argv)
  *   Name resolution / Discovery
  ************************************************************/
 
-pointer ROSEUS_RESOLVE_NAME(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_RESOLVE_NAME(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(1);
   if (!isstring(argv[0])) error(E_NOSTRING);
-  string src((char *)(argv[0]->c.str.chars));
+  string src((char*)(argv[0]->c.str.chars));
   string dst = resolveName(src);
-  return makestring((char *)dst.c_str(), dst.length());
+  return makestring((char*)dst.c_str(), dst.length());
 }
 
-pointer ROSEUS_GETNAME(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_GETNAME(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(0);
   string name = s_node->get_fully_qualified_name();
-  return makestring((char *)name.c_str(), name.length());
+  return makestring((char*)name.c_str(), name.length());
 }
 
-pointer ROSEUS_GETNAMESPACE(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_GETNAMESPACE(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(0);
   string ns = s_node->get_namespace();
-  return makestring((char *)ns.c_str(), ns.length());
+  return makestring((char*)ns.c_str(), ns.length());
 }
 
-pointer ROSEUS_GET_TOPICS(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_GET_TOPICS(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(0);
 
@@ -1518,23 +1495,22 @@ pointer ROSEUS_GET_TOPICS(register context *ctx, int n, pointer *argv)
   ret = cons(ctx, NIL, NIL);
   first = ret;
   vpush(ret);
-  for (const auto &entry : topics) {
+  for (const auto& entry : topics) {
     string name = entry.first;
     string type = entry.second.empty() ? "" : entry.second[0];
     pointer tmp = cons(ctx,
-                       makestring((char *)name.c_str(), name.length()),
-                       makestring((char *)type.c_str(), type.length()));
+                       makestring((char*)name.c_str(), name.length()),
+                       makestring((char*)type.c_str(), type.length()));
     vpush(tmp);
     ccdr(ret) = cons(ctx, tmp, NIL);
     ret = ccdr(ret);
-    vpop(); // tmp
+    vpop();  // tmp
   }
-  vpop(); // ret
+  vpop();  // ret
   return ccdr(first);
 }
 
-pointer ROSEUS_GET_NODES(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_GET_NODES(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(0);
 
@@ -1544,11 +1520,11 @@ pointer ROSEUS_GET_NODES(register context *ctx, int n, pointer *argv)
   ret = cons(ctx, NIL, NIL);
   first = ret;
   vpush(ret);
-  for (const auto &node : nodes) {
-    ccdr(ret) = cons(ctx, makestring((char *)node.c_str(), node.length()), NIL);
+  for (const auto& node : nodes) {
+    ccdr(ret) = cons(ctx, makestring((char*)node.c_str(), node.length()), NIL);
     ret = ccdr(ret);
   }
-  vpop(); // ret
+  vpop();  // ret
   return ccdr(first);
 }
 
@@ -1556,31 +1532,28 @@ pointer ROSEUS_GET_NODES(register context *ctx, int n, pointer *argv)
  *   Package utilities
  ************************************************************/
 
-pointer ROSEUS_ROSPACK_FIND(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ROSPACK_FIND(register context* ctx, int n, pointer* argv) {
   ckarg(1);
   string pkg;
-  if (isstring(argv[0])) pkg.assign((char *)get_string(argv[0]));
+  if (isstring(argv[0])) pkg.assign((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   try {
     string path = ament_index_cpp::get_package_share_directory(pkg);
-    return makestring((char *)path.c_str(), path.length());
-  } catch (const std::exception &e) {
+    return makestring((char*)path.c_str(), path.length());
+  } catch (const std::exception& e) {
     return (NIL);
   }
 }
 
-pointer ROSEUS_ROSPACK_DEPENDS(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ROSPACK_DEPENDS(register context* ctx, int n, pointer* argv) {
   ckarg(1);
   RCLCPP_WARN(rclcpp::get_logger("roseus"),
               "rospack-depends is not supported in ROS 2. Use ament_index instead.");
   return (NIL);
 }
 
-pointer ROSEUS_ROSPACK_PLUGINS(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ROSPACK_PLUGINS(register context* ctx, int n, pointer* argv) {
   ckarg(2);
   RCLCPP_WARN(rclcpp::get_logger("roseus"),
               "rospack-plugins is not supported in ROS 2.");
@@ -1591,8 +1564,7 @@ pointer ROSEUS_ROSPACK_PLUGINS(register context *ctx, int n, pointer *argv)
  *   Timer / Callback Group
  ************************************************************/
 
-pointer ROSEUS_CREATE_TIMER(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_CREATE_TIMER(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   numunion nu;
   bool oneshot = false;
@@ -1605,14 +1577,14 @@ pointer ROSEUS_CREATE_TIMER(register context *ctx, int n, pointer *argv)
   // period callbackfunc args0 ... argsN [:oneshot oneshot] [:groupname groupname]
   bool check_key = true;
   while (check_key) {
-    if (n > 1 && issymbol(argv[n-2])) {
-      if (argv[n-2] == K_ROSEUS_ONESHOT && issymbol(argv[n-1])) {
-        if (argv[n-1] != NIL) {
+    if (n > 1 && issymbol(argv[n - 2])) {
+      if (argv[n - 2] == K_ROSEUS_ONESHOT && issymbol(argv[n - 1])) {
+        if (argv[n - 1] != NIL) {
           oneshot = true;
         }
         n -= 2;
-      } else if (argv[n-2] == K_ROSEUS_GROUPNAME && isstring(argv[n-1])) {
-        groupname.assign((char *)get_string(argv[n-1]));
+      } else if (argv[n - 2] == K_ROSEUS_GROUPNAME && isstring(argv[n - 1])) {
+        groupname.assign((char*)get_string(argv[n - 1]));
         auto it = s_mapCallbackGroup.find(groupname);
         if (it != s_mapCallbackGroup.end()) {
           RCLCPP_DEBUG(s_node->get_logger(), "create-timer with groupname=%s", groupname.c_str());
@@ -1663,67 +1635,74 @@ pointer ROSEUS_CREATE_TIMER(register context *ctx, int n, pointer *argv)
                fncallname.c_str(), period, oneshot, groupname.c_str());
 
   auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(
-    std::chrono::duration<double>(period));
+      std::chrono::duration<double>(period));
 
   shared_ptr<rclcpp::TimerBase> timer;
   if (oneshot) {
     // For oneshot, we create a timer that cancels itself after firing
     timer = s_node->create_wall_timer(
-      duration,
-      [scb, args, fncallname]() {
-        context *ctx = current_ctx;
-        pointer argp = args;
-        int argc = 0;
+        duration,
+        [scb, args, fncallname]() {
+          context* ctx = current_ctx;
+          pointer argp = args;
+          int argc = 0;
 
-        if (!(issymbol(scb) || piscode(scb) || ccar(scb) == LAMCLOSURE)) {
-          RCLCPP_ERROR(rclcpp::get_logger("roseus"), "can't find timer callback function");
-          return;
-        }
+          if (!(issymbol(scb) || piscode(scb) || ccar(scb) == LAMCLOSURE)) {
+            RCLCPP_ERROR(rclcpp::get_logger("roseus"), "can't find timer callback function");
+            return;
+          }
 
-        while (argp != NIL) { ckpush(ccar(argp)); argp = ccdr(argp); argc++; }
-        ufuncall(ctx, (ctx->callfp ? ctx->callfp->form : NIL),
-                 scb, (pointer)(ctx->vsp - argc), NULL, argc);
-        while (argc-- > 0) vpop();
+          while (argp != NIL) {
+            ckpush(ccar(argp));
+            argp = ccdr(argp);
+            argc++;
+          }
+          ufuncall(ctx, (ctx->callfp ? ctx->callfp->form : NIL),
+                   scb, (pointer)(ctx->vsp - argc), NULL, argc);
+          while (argc-- > 0) vpop();
 
-        // Cancel the timer (oneshot)
-        auto it = s_mapTimered.find(fncallname);
-        if (it != s_mapTimered.end()) {
-          it->second->cancel();
-        }
-      },
-      cbg);
+          // Cancel the timer (oneshot)
+          auto it = s_mapTimered.find(fncallname);
+          if (it != s_mapTimered.end()) {
+            it->second->cancel();
+          }
+        },
+        cbg);
   } else {
     timer = s_node->create_wall_timer(
-      duration,
-      [scb, args]() {
-        context *ctx = current_ctx;
-        pointer argp = args;
-        int argc = 0;
+        duration,
+        [scb, args]() {
+          context* ctx = current_ctx;
+          pointer argp = args;
+          int argc = 0;
 
-        if (!(issymbol(scb) || piscode(scb) || ccar(scb) == LAMCLOSURE)) {
-          RCLCPP_ERROR(rclcpp::get_logger("roseus"), "can't find timer callback function");
-          return;
-        }
+          if (!(issymbol(scb) || piscode(scb) || ccar(scb) == LAMCLOSURE)) {
+            RCLCPP_ERROR(rclcpp::get_logger("roseus"), "can't find timer callback function");
+            return;
+          }
 
-        while (argp != NIL) { ckpush(ccar(argp)); argp = ccdr(argp); argc++; }
-        ufuncall(ctx, (ctx->callfp ? ctx->callfp->form : NIL),
-                 scb, (pointer)(ctx->vsp - argc), NULL, argc);
-        while (argc-- > 0) vpop();
-      },
-      cbg);
+          while (argp != NIL) {
+            ckpush(ccar(argp));
+            argp = ccdr(argp);
+            argc++;
+          }
+          ufuncall(ctx, (ctx->callfp ? ctx->callfp->form : NIL),
+                   scb, (pointer)(ctx->vsp - argc), NULL, argc);
+          while (argc-- > 0) vpop();
+        },
+        cbg);
   }
 
   s_mapTimered[fncallname] = timer;
   return (T);
 }
 
-pointer ROSEUS_CREATE_NODEHANDLE(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_CREATE_NODEHANDLE(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   string groupname;
   ckarg2(1, 2);
 
-  if (isstring(argv[0])) groupname.assign((char *)get_string(argv[0]));
+  if (isstring(argv[0])) groupname.assign((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   if (s_mapCallbackGroup.find(groupname) != s_mapCallbackGroup.end()) {
@@ -1742,8 +1721,8 @@ pointer ROSEUS_CREATE_NODEHANDLE(register context *ctx, int n, pointer *argv)
  ************************************************************/
 
 /* Parse "pkg/action/Name" → (pkg, Name) */
-static bool parseActionType(const string &action_type,
-                            string &pkg, string &name) {
+static bool parseActionType(const string& action_type,
+                            string& pkg, string& name) {
   // Expected format: "pkg/action/Name"
   auto pos1 = action_type.find('/');
   if (pos1 == string::npos) return false;
@@ -1755,64 +1734,63 @@ static bool parseActionType(const string &action_type,
 }
 
 /* Load action type support dynamically */
-static const rosidl_action_type_support_t *
-loadActionTypeSupport(const string &action_type,
-                      vector<shared_ptr<rcpputils::SharedLibrary>> &libs) {
+static const rosidl_action_type_support_t*
+loadActionTypeSupport(const string& action_type,
+                      vector<shared_ptr<rcpputils::SharedLibrary>>& libs) {
   string pkg, name;
   if (!parseActionType(action_type, pkg, name)) return nullptr;
 
   // Load library
   auto lib = rclcpp::get_typesupport_library(
-    action_type, "rosidl_typesupport_c");
+      action_type, "rosidl_typesupport_c");
   libs.push_back(lib);
 
   // Build symbol name
-  string symbol = "rosidl_typesupport_c__get_action_type_support_handle__"
-    + pkg + "__action__" + name;
+  string symbol = "rosidl_typesupport_c__get_action_type_support_handle__" + pkg + "__action__" + name;
 
-  typedef const rosidl_action_type_support_t * (*GetTSFunc)();
+  typedef const rosidl_action_type_support_t* (*GetTSFunc)();
   auto func = reinterpret_cast<GetTSFunc>(lib->get_symbol(symbol.c_str()));
   if (!func) return nullptr;
   return func();
 }
 
 /* Load service introspection for struct allocation */
-static const rosidl_typesupport_introspection_cpp::ServiceMembers *
-loadServiceIntrospection(const string &service_type,
-                         vector<shared_ptr<rcpputils::SharedLibrary>> &libs) {
+static const rosidl_typesupport_introspection_cpp::ServiceMembers*
+loadServiceIntrospection(const string& service_type,
+                         vector<shared_ptr<rcpputils::SharedLibrary>>& libs) {
   auto lib = rclcpp::get_typesupport_library(
-    service_type, "rosidl_typesupport_introspection_cpp");
+      service_type, "rosidl_typesupport_introspection_cpp");
   libs.push_back(lib);
   auto ts = rclcpp::get_service_typesupport_handle(
-    service_type, "rosidl_typesupport_introspection_cpp", *lib);
+      service_type, "rosidl_typesupport_introspection_cpp", *lib);
   return static_cast<
-    const rosidl_typesupport_introspection_cpp::ServiceMembers *>(ts->data);
+      const rosidl_typesupport_introspection_cpp::ServiceMembers*>(ts->data);
 }
 
 /* Load message introspection for struct allocation */
-static const rosidl_typesupport_introspection_cpp::MessageMembers *
-loadMessageIntrospection(const string &msg_type,
-                         vector<shared_ptr<rcpputils::SharedLibrary>> &libs) {
+static const rosidl_typesupport_introspection_cpp::MessageMembers*
+loadMessageIntrospection(const string& msg_type,
+                         vector<shared_ptr<rcpputils::SharedLibrary>>& libs) {
   auto lib = rclcpp::get_typesupport_library(
-    msg_type, "rosidl_typesupport_introspection_cpp");
+      msg_type, "rosidl_typesupport_introspection_cpp");
   libs.push_back(lib);
   auto ts = rclcpp::get_message_typesupport_handle(
-    msg_type, "rosidl_typesupport_introspection_cpp", *lib);
+      msg_type, "rosidl_typesupport_introspection_cpp", *lib);
   return static_cast<
-    const rosidl_typesupport_introspection_cpp::MessageMembers *>(ts->data);
+      const rosidl_typesupport_introspection_cpp::MessageMembers*>(ts->data);
 }
 
 /* Serialize EusLisp message to C struct via CDR */
 static bool eusMsgToCStruct(pointer eus_msg,
-                            const rosidl_message_type_support_t *msg_ts,
-                            const rosidl_typesupport_introspection_cpp::MessageMembers *intro,
-                            vector<uint8_t> &buf) {
+                            const rosidl_message_type_support_t* msg_ts,
+                            const rosidl_typesupport_introspection_cpp::MessageMembers* intro,
+                            vector<uint8_t>& buf) {
   buf.resize(intro->size_of_, 0);
   intro->init_function(buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
 
   rclcpp::SerializedMessage cdr = serializeEusMessage(eus_msg);
   rmw_ret_t rc = rmw_deserialize(
-    &cdr.get_rcl_serialized_message(), msg_ts, buf.data());
+      &cdr.get_rcl_serialized_message(), msg_ts, buf.data());
   if (rc != RMW_RET_OK) {
     intro->fini_function(buf.data());
     return false;
@@ -1821,8 +1799,8 @@ static bool eusMsgToCStruct(pointer eus_msg,
 }
 
 /* Deserialize C struct to EusLisp message via CDR */
-static bool cStructToEusMsg(const void *c_struct,
-                            const rosidl_message_type_support_t *msg_ts,
+static bool cStructToEusMsg(const void* c_struct,
+                            const rosidl_message_type_support_t* msg_ts,
                             pointer eus_msg) {
   rcl_serialized_message_t serialized = rmw_get_zero_initialized_serialized_message();
   rcutils_allocator_t allocator = rcutils_get_default_allocator();
@@ -1835,7 +1813,7 @@ static bool cStructToEusMsg(const void *c_struct,
   }
 
   auto sm = std::make_shared<rclcpp::SerializedMessage>(serialized.buffer_length);
-  auto &rcl_msg = sm->get_rcl_serialized_message();
+  auto& rcl_msg = sm->get_rcl_serialized_message();
   memcpy(rcl_msg.buffer, serialized.buffer, serialized.buffer_length);
   rcl_msg.buffer_length = serialized.buffer_length;
   rmw_serialized_message_fini(&serialized);
@@ -1848,14 +1826,13 @@ static bool cStructToEusMsg(const void *c_struct,
  *   Action Client
  ************************************************************/
 
-pointer ROSEUS_ACTION_CLIENT_INIT(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_CLIENT_INIT(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(2);
   string action_name, action_type;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
-  if (isstring(argv[1])) action_type.assign((char *)get_string(argv[1]));
+  if (isstring(argv[1])) action_type.assign((char*)get_string(argv[1]));
   else error(E_NOSTRING);
 
   if (s_mapActionClients.find(action_name) != s_mapActionClients.end()) {
@@ -1892,7 +1869,7 @@ pointer ROSEUS_ACTION_CLIENT_INIT(register context *ctx, int n, pointer *argv)
     data->cancel_svc_intro = loadServiceIntrospection(cancel_svc_type, data->libs);
     data->feedback_msg_intro = loadMessageIntrospection(feedback_msg_type, data->libs);
     data->status_msg_intro = loadMessageIntrospection(status_msg_type, data->libs);
-  } catch (const std::exception &e) {
+  } catch (const std::exception& e) {
     RCLCPP_ERROR(s_node->get_logger(), "failed to load introspection for %s: %s",
                  action_type.c_str(), e.what());
     return (NIL);
@@ -1901,9 +1878,9 @@ pointer ROSEUS_ACTION_CLIENT_INIT(register context *ctx, int n, pointer *argv)
   // Init action client
   rcl_action_client_options_t options = rcl_action_client_get_default_options();
   rcl_ret_t rc = rcl_action_client_init(
-    &data->client,
-    s_node->get_node_base_interface()->get_rcl_node_handle(),
-    data->action_ts, action_name.c_str(), &options);
+      &data->client,
+      s_node->get_node_base_interface()->get_rcl_node_handle(),
+      data->action_ts, action_name.c_str(), &options);
 
   if (rc != RCL_RET_OK) {
     RCLCPP_ERROR(s_node->get_logger(), "failed to init action client %s: %s",
@@ -1916,31 +1893,29 @@ pointer ROSEUS_ACTION_CLIENT_INIT(register context *ctx, int n, pointer *argv)
   return (T);
 }
 
-pointer ROSEUS_ACTION_CLIENT_DESTROY(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_CLIENT_DESTROY(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(1);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   auto it = s_mapActionClients.find(action_name);
   if (it == s_mapActionClients.end()) return (NIL);
 
   rcl_action_client_fini(
-    &it->second->client,
-    s_node->get_node_base_interface()->get_rcl_node_handle());
+      &it->second->client,
+      s_node->get_node_base_interface()->get_rcl_node_handle());
   s_mapActionClients.erase(it);
   return (T);
 }
 
-pointer ROSEUS_ACTION_WAIT_FOR_SERVER(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_WAIT_FOR_SERVER(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   numunion nu;
   ckarg2(1, 2);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   float timeout = -1;
@@ -1956,8 +1931,8 @@ pointer ROSEUS_ACTION_WAIT_FOR_SERVER(register context *ctx, int n, pointer *arg
   while (true) {
     bool is_available = false;
     rcl_ret_t rc = rcl_action_server_is_available(
-      s_node->get_node_base_interface()->get_rcl_node_handle(),
-      &it->second->client, &is_available);
+        s_node->get_node_base_interface()->get_rcl_node_handle(),
+        &it->second->client, &is_available);
     if (rc == RCL_RET_OK && is_available) return (T);
 
     if (timeout >= 0) {
@@ -1971,12 +1946,11 @@ pointer ROSEUS_ACTION_WAIT_FOR_SERVER(register context *ctx, int n, pointer *arg
   return (NIL);
 }
 
-pointer ROSEUS_ACTION_SEND_GOAL(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_SEND_GOAL(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(2);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
   pointer eus_request = argv[1];
 
@@ -1985,7 +1959,7 @@ pointer ROSEUS_ACTION_SEND_GOAL(register context *ctx, int n, pointer *argv)
     RCLCPP_ERROR(s_node->get_logger(), "action client %s not found", action_name.c_str());
     return (NIL);
   }
-  auto &data = *it->second;
+  auto& data = *it->second;
 
   // EusLisp SendGoal_Request → C struct
   auto req_members = data.goal_svc_intro->request_members_;
@@ -2002,7 +1976,7 @@ pointer ROSEUS_ACTION_SEND_GOAL(register context *ctx, int n, pointer *argv)
 
   int64_t seq_num = 0;
   rcl_ret_t rc = rcl_action_send_goal_request(
-    &data.client, req_buf.data(), &seq_num);
+      &data.client, req_buf.data(), &seq_num);
   req_members->fini_function(req_buf.data());
 
   if (rc != RCL_RET_OK) {
@@ -2015,18 +1989,17 @@ pointer ROSEUS_ACTION_SEND_GOAL(register context *ctx, int n, pointer *argv)
   return makeint(seq_num);
 }
 
-pointer ROSEUS_ACTION_TAKE_GOAL_RESPONSE(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_TAKE_GOAL_RESPONSE(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(2);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
   pointer eus_response = argv[1];
 
   auto it = s_mapActionClients.find(action_name);
   if (it == s_mapActionClients.end()) return (NIL);
-  auto &data = *it->second;
+  auto& data = *it->second;
 
   auto resp_members = data.goal_svc_intro->response_members_;
   vector<uint8_t> resp_buf(resp_members->size_of_, 0);
@@ -2043,25 +2016,24 @@ pointer ROSEUS_ACTION_TAKE_GOAL_RESPONSE(register context *ctx, int n, pointer *
 
   vpush(eus_response);
   bool ok = cStructToEusMsg(resp_buf.data(),
-    data.action_ts->goal_service_type_support->response_typesupport,
-    eus_response);
+                            data.action_ts->goal_service_type_support->response_typesupport,
+                            eus_response);
   vpop();
   resp_members->fini_function(resp_buf.data());
   return ok ? T : NIL;
 }
 
-pointer ROSEUS_ACTION_SEND_RESULT_REQUEST(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_SEND_RESULT_REQUEST(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(2);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
   pointer eus_request = argv[1];
 
   auto it = s_mapActionClients.find(action_name);
   if (it == s_mapActionClients.end()) return (NIL);
-  auto &data = *it->second;
+  auto& data = *it->second;
 
   auto req_members = data.result_svc_intro->request_members_;
   vector<uint8_t> req_buf;
@@ -2076,7 +2048,7 @@ pointer ROSEUS_ACTION_SEND_RESULT_REQUEST(register context *ctx, int n, pointer 
 
   int64_t seq_num = 0;
   rcl_ret_t rc = rcl_action_send_result_request(
-    &data.client, req_buf.data(), &seq_num);
+      &data.client, req_buf.data(), &seq_num);
   req_members->fini_function(req_buf.data());
 
   if (rc != RCL_RET_OK) {
@@ -2087,18 +2059,17 @@ pointer ROSEUS_ACTION_SEND_RESULT_REQUEST(register context *ctx, int n, pointer 
   return makeint(seq_num);
 }
 
-pointer ROSEUS_ACTION_TAKE_RESULT_RESPONSE(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_TAKE_RESULT_RESPONSE(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(2);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
   pointer eus_response = argv[1];
 
   auto it = s_mapActionClients.find(action_name);
   if (it == s_mapActionClients.end()) return (NIL);
-  auto &data = *it->second;
+  auto& data = *it->second;
 
   auto resp_members = data.result_svc_intro->response_members_;
   vector<uint8_t> resp_buf(resp_members->size_of_, 0);
@@ -2115,29 +2086,28 @@ pointer ROSEUS_ACTION_TAKE_RESULT_RESPONSE(register context *ctx, int n, pointer
 
   vpush(eus_response);
   bool ok = cStructToEusMsg(resp_buf.data(),
-    data.action_ts->result_service_type_support->response_typesupport,
-    eus_response);
+                            data.action_ts->result_service_type_support->response_typesupport,
+                            eus_response);
   vpop();
   resp_members->fini_function(resp_buf.data());
   return ok ? T : NIL;
 }
 
-pointer ROSEUS_ACTION_TAKE_FEEDBACK(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_TAKE_FEEDBACK(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(2);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
   pointer eus_feedback = argv[1];
 
   auto it = s_mapActionClients.find(action_name);
   if (it == s_mapActionClients.end()) return (NIL);
-  auto &data = *it->second;
+  auto& data = *it->second;
 
   vector<uint8_t> fb_buf(data.feedback_msg_intro->size_of_, 0);
   data.feedback_msg_intro->init_function(
-    fb_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
+      fb_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
 
   rcl_ret_t rc = rcl_action_take_feedback(&data.client, fb_buf.data());
   if (rc != RCL_RET_OK) {
@@ -2147,28 +2117,27 @@ pointer ROSEUS_ACTION_TAKE_FEEDBACK(register context *ctx, int n, pointer *argv)
 
   vpush(eus_feedback);
   bool ok = cStructToEusMsg(fb_buf.data(),
-    data.action_ts->feedback_message_type_support, eus_feedback);
+                            data.action_ts->feedback_message_type_support, eus_feedback);
   vpop();
   data.feedback_msg_intro->fini_function(fb_buf.data());
   return ok ? T : NIL;
 }
 
-pointer ROSEUS_ACTION_TAKE_STATUS(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_TAKE_STATUS(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(2);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
   pointer eus_status = argv[1];
 
   auto it = s_mapActionClients.find(action_name);
   if (it == s_mapActionClients.end()) return (NIL);
-  auto &data = *it->second;
+  auto& data = *it->second;
 
   vector<uint8_t> status_buf(data.status_msg_intro->size_of_, 0);
   data.status_msg_intro->init_function(
-    status_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
+      status_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
 
   rcl_ret_t rc = rcl_action_take_status(&data.client, status_buf.data());
   if (rc != RCL_RET_OK) {
@@ -2178,24 +2147,23 @@ pointer ROSEUS_ACTION_TAKE_STATUS(register context *ctx, int n, pointer *argv)
 
   vpush(eus_status);
   bool ok = cStructToEusMsg(status_buf.data(),
-    data.action_ts->status_message_type_support, eus_status);
+                            data.action_ts->status_message_type_support, eus_status);
   vpop();
   data.status_msg_intro->fini_function(status_buf.data());
   return ok ? T : NIL;
 }
 
-pointer ROSEUS_ACTION_SEND_CANCEL(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_SEND_CANCEL(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(2);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
   pointer eus_request = argv[1];
 
   auto it = s_mapActionClients.find(action_name);
   if (it == s_mapActionClients.end()) return (NIL);
-  auto &data = *it->second;
+  auto& data = *it->second;
 
   auto req_members = data.cancel_svc_intro->request_members_;
   vector<uint8_t> req_buf;
@@ -2210,7 +2178,7 @@ pointer ROSEUS_ACTION_SEND_CANCEL(register context *ctx, int n, pointer *argv)
 
   int64_t seq_num = 0;
   rcl_ret_t rc = rcl_action_send_cancel_request(
-    &data.client, req_buf.data(), &seq_num);
+      &data.client, req_buf.data(), &seq_num);
   req_members->fini_function(req_buf.data());
 
   if (rc != RCL_RET_OK) {
@@ -2220,18 +2188,17 @@ pointer ROSEUS_ACTION_SEND_CANCEL(register context *ctx, int n, pointer *argv)
   return makeint(seq_num);
 }
 
-pointer ROSEUS_ACTION_TAKE_CANCEL_RESPONSE(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_TAKE_CANCEL_RESPONSE(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(2);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
   pointer eus_response = argv[1];
 
   auto it = s_mapActionClients.find(action_name);
   if (it == s_mapActionClients.end()) return (NIL);
-  auto &data = *it->second;
+  auto& data = *it->second;
 
   auto resp_members = data.cancel_svc_intro->response_members_;
   vector<uint8_t> resp_buf(resp_members->size_of_, 0);
@@ -2248,8 +2215,8 @@ pointer ROSEUS_ACTION_TAKE_CANCEL_RESPONSE(register context *ctx, int n, pointer
 
   vpush(eus_response);
   bool ok = cStructToEusMsg(resp_buf.data(),
-    data.action_ts->cancel_service_type_support->response_typesupport,
-    eus_response);
+                            data.action_ts->cancel_service_type_support->response_typesupport,
+                            eus_response);
   vpop();
   resp_members->fini_function(resp_buf.data());
   return ok ? T : NIL;
@@ -2259,14 +2226,13 @@ pointer ROSEUS_ACTION_TAKE_CANCEL_RESPONSE(register context *ctx, int n, pointer
  *   Action Server
  ************************************************************/
 
-pointer ROSEUS_ACTION_SERVER_INIT(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_SERVER_INIT(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(2);
   string action_name, action_type;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
-  if (isstring(argv[1])) action_type.assign((char *)get_string(argv[1]));
+  if (isstring(argv[1])) action_type.assign((char*)get_string(argv[1]));
   else error(E_NOSTRING);
 
   if (s_mapActionServers.find(action_name) != s_mapActionServers.end()) {
@@ -2304,20 +2270,20 @@ pointer ROSEUS_ACTION_SERVER_INIT(register context *ctx, int n, pointer *argv)
     data->cancel_svc_intro = loadServiceIntrospection(cancel_svc_type, data->libs);
     data->feedback_msg_intro = loadMessageIntrospection(feedback_msg_type, data->libs);
     data->status_msg_intro = loadMessageIntrospection(status_msg_type, data->libs);
-  } catch (const std::exception &e) {
+  } catch (const std::exception& e) {
     RCLCPP_ERROR(s_node->get_logger(), "failed to load introspection for %s: %s",
                  action_type.c_str(), e.what());
     return (NIL);
   }
 
   // Get a clock for the action server
-  rcl_clock_t *clock = s_node->get_clock()->get_clock_handle();
+  rcl_clock_t* clock = s_node->get_clock()->get_clock_handle();
 
   rcl_action_server_options_t options = rcl_action_server_get_default_options();
   rcl_ret_t rc = rcl_action_server_init(
-    &data->server,
-    s_node->get_node_base_interface()->get_rcl_node_handle(),
-    clock, data->action_ts, action_name.c_str(), &options);
+      &data->server,
+      s_node->get_node_base_interface()->get_rcl_node_handle(),
+      clock, data->action_ts, action_name.c_str(), &options);
 
   if (rc != RCL_RET_OK) {
     RCLCPP_ERROR(s_node->get_logger(), "failed to init action server %s: %s",
@@ -2330,12 +2296,11 @@ pointer ROSEUS_ACTION_SERVER_INIT(register context *ctx, int n, pointer *argv)
   return (T);
 }
 
-pointer ROSEUS_ACTION_SERVER_DESTROY(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_SERVER_DESTROY(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(1);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   auto it = s_mapActionServers.find(action_name);
@@ -2345,31 +2310,30 @@ pointer ROSEUS_ACTION_SERVER_DESTROY(register context *ctx, int n, pointer *argv
   // rcl_action_server_fini will clean them up.
 
   rcl_action_server_fini(
-    &it->second->server,
-    s_node->get_node_base_interface()->get_rcl_node_handle());
+      &it->second->server,
+      s_node->get_node_base_interface()->get_rcl_node_handle());
   s_mapActionServers.erase(it);
   return (T);
 }
 
-pointer ROSEUS_ACTION_TAKE_GOAL_REQUEST(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_TAKE_GOAL_REQUEST(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(2);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
   pointer eus_request = argv[1];
 
   auto it = s_mapActionServers.find(action_name);
   if (it == s_mapActionServers.end()) return (NIL);
-  auto &data = *it->second;
+  auto& data = *it->second;
 
   auto req_members = data.goal_svc_intro->request_members_;
   vector<uint8_t> req_buf(req_members->size_of_, 0);
   req_members->init_function(req_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
 
   rcl_ret_t rc = rcl_action_take_goal_request(
-    &data.server, &data.last_goal_request_header, req_buf.data());
+      &data.server, &data.last_goal_request_header, req_buf.data());
 
   if (rc != RCL_RET_OK) {
     req_members->fini_function(req_buf.data());
@@ -2378,25 +2342,24 @@ pointer ROSEUS_ACTION_TAKE_GOAL_REQUEST(register context *ctx, int n, pointer *a
 
   vpush(eus_request);
   bool ok = cStructToEusMsg(req_buf.data(),
-    data.action_ts->goal_service_type_support->request_typesupport,
-    eus_request);
+                            data.action_ts->goal_service_type_support->request_typesupport,
+                            eus_request);
   vpop();
   req_members->fini_function(req_buf.data());
   return ok ? T : NIL;
 }
 
-pointer ROSEUS_ACTION_SEND_GOAL_RESPONSE(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_SEND_GOAL_RESPONSE(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(2);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
   pointer eus_response = argv[1];
 
   auto it = s_mapActionServers.find(action_name);
   if (it == s_mapActionServers.end()) return (NIL);
-  auto &data = *it->second;
+  auto& data = *it->second;
 
   auto resp_members = data.goal_svc_intro->response_members_;
   vector<uint8_t> resp_buf;
@@ -2410,7 +2373,7 @@ pointer ROSEUS_ACTION_SEND_GOAL_RESPONSE(register context *ctx, int n, pointer *
   vpop();
 
   rcl_ret_t rc = rcl_action_send_goal_response(
-    &data.server, &data.last_goal_request_header, resp_buf.data());
+      &data.server, &data.last_goal_request_header, resp_buf.data());
   resp_members->fini_function(resp_buf.data());
 
   if (rc != RCL_RET_OK) {
@@ -2421,18 +2384,17 @@ pointer ROSEUS_ACTION_SEND_GOAL_RESPONSE(register context *ctx, int n, pointer *
   return (T);
 }
 
-pointer ROSEUS_ACTION_ACCEPT_NEW_GOAL(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_ACCEPT_NEW_GOAL(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(2);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
-  pointer eus_uuid = argv[1]; // EusLisp string (16 bytes)
+  pointer eus_uuid = argv[1];  // EusLisp string (16 bytes)
 
   auto it = s_mapActionServers.find(action_name);
   if (it == s_mapActionServers.end()) return (NIL);
-  auto &data = *it->second;
+  auto& data = *it->second;
 
   rcl_action_goal_info_t goal_info;
   memset(&goal_info, 0, sizeof(goal_info));
@@ -2444,8 +2406,8 @@ pointer ROSEUS_ACTION_ACCEPT_NEW_GOAL(register context *ctx, int n, pointer *arg
   goal_info.stamp.sec = static_cast<int32_t>(now.seconds());
   goal_info.stamp.nanosec = static_cast<uint32_t>(now.nanoseconds() % 1000000000LL);
 
-  rcl_action_goal_handle_t *gh = rcl_action_accept_new_goal(
-    &data.server, &goal_info);
+  rcl_action_goal_handle_t* gh = rcl_action_accept_new_goal(
+      &data.server, &goal_info);
   if (!gh) {
     RCLCPP_ERROR(s_node->get_logger(), "failed to accept new goal for %s", action_name.c_str());
     return (NIL);
@@ -2464,21 +2426,20 @@ pointer ROSEUS_ACTION_ACCEPT_NEW_GOAL(register context *ctx, int n, pointer *arg
   rcl_action_publish_status(&data.server, &status_msg.msg);
   rcl_action_goal_status_array_fini(&status_msg);
 
-  return makeint(data.goal_handles.size() - 1); // return handle index
+  return makeint(data.goal_handles.size() - 1);  // return handle index
 }
 
-pointer ROSEUS_ACTION_PUBLISH_FEEDBACK(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_PUBLISH_FEEDBACK(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(2);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
   pointer eus_feedback = argv[1];
 
   auto it = s_mapActionServers.find(action_name);
   if (it == s_mapActionServers.end()) return (NIL);
-  auto &data = *it->second;
+  auto& data = *it->second;
 
   vector<uint8_t> fb_buf;
   vpush(eus_feedback);
@@ -2500,17 +2461,16 @@ pointer ROSEUS_ACTION_PUBLISH_FEEDBACK(register context *ctx, int n, pointer *ar
   return (T);
 }
 
-pointer ROSEUS_ACTION_PUBLISH_STATUS(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_PUBLISH_STATUS(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(1);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   auto it = s_mapActionServers.find(action_name);
   if (it == s_mapActionServers.end()) return (NIL);
-  auto &data = *it->second;
+  auto& data = *it->second;
 
   rcl_action_goal_status_array_t status_msg =
       rcl_action_get_zero_initialized_goal_status_array();
@@ -2526,25 +2486,24 @@ pointer ROSEUS_ACTION_PUBLISH_STATUS(register context *ctx, int n, pointer *argv
   return (rc == RCL_RET_OK) ? T : NIL;
 }
 
-pointer ROSEUS_ACTION_TAKE_RESULT_REQUEST(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_TAKE_RESULT_REQUEST(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(2);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
   pointer eus_request = argv[1];
 
   auto it = s_mapActionServers.find(action_name);
   if (it == s_mapActionServers.end()) return (NIL);
-  auto &data = *it->second;
+  auto& data = *it->second;
 
   auto req_members = data.result_svc_intro->request_members_;
   vector<uint8_t> req_buf(req_members->size_of_, 0);
   req_members->init_function(req_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
 
   rcl_ret_t rc = rcl_action_take_result_request(
-    &data.server, &data.last_result_request_header, req_buf.data());
+      &data.server, &data.last_result_request_header, req_buf.data());
 
   if (rc != RCL_RET_OK) {
     req_members->fini_function(req_buf.data());
@@ -2553,25 +2512,24 @@ pointer ROSEUS_ACTION_TAKE_RESULT_REQUEST(register context *ctx, int n, pointer 
 
   vpush(eus_request);
   bool ok = cStructToEusMsg(req_buf.data(),
-    data.action_ts->result_service_type_support->request_typesupport,
-    eus_request);
+                            data.action_ts->result_service_type_support->request_typesupport,
+                            eus_request);
   vpop();
   req_members->fini_function(req_buf.data());
   return ok ? T : NIL;
 }
 
-pointer ROSEUS_ACTION_SEND_RESULT_RESPONSE(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_SEND_RESULT_RESPONSE(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(2);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
   pointer eus_response = argv[1];
 
   auto it = s_mapActionServers.find(action_name);
   if (it == s_mapActionServers.end()) return (NIL);
-  auto &data = *it->second;
+  auto& data = *it->second;
 
   auto resp_members = data.result_svc_intro->response_members_;
   vector<uint8_t> resp_buf;
@@ -2585,7 +2543,7 @@ pointer ROSEUS_ACTION_SEND_RESULT_RESPONSE(register context *ctx, int n, pointer
   vpop();
 
   rcl_ret_t rc = rcl_action_send_result_response(
-    &data.server, &data.last_result_request_header, resp_buf.data());
+      &data.server, &data.last_result_request_header, resp_buf.data());
   resp_members->fini_function(resp_buf.data());
 
   if (rc != RCL_RET_OK) {
@@ -2595,25 +2553,24 @@ pointer ROSEUS_ACTION_SEND_RESULT_RESPONSE(register context *ctx, int n, pointer
   return (T);
 }
 
-pointer ROSEUS_ACTION_TAKE_CANCEL_REQUEST(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_TAKE_CANCEL_REQUEST(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(2);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
   pointer eus_request = argv[1];
 
   auto it = s_mapActionServers.find(action_name);
   if (it == s_mapActionServers.end()) return (NIL);
-  auto &data = *it->second;
+  auto& data = *it->second;
 
   auto req_members = data.cancel_svc_intro->request_members_;
   vector<uint8_t> req_buf(req_members->size_of_, 0);
   req_members->init_function(req_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
 
   rcl_ret_t rc = rcl_action_take_cancel_request(
-    &data.server, &data.last_cancel_request_header, req_buf.data());
+      &data.server, &data.last_cancel_request_header, req_buf.data());
 
   if (rc != RCL_RET_OK) {
     req_members->fini_function(req_buf.data());
@@ -2622,25 +2579,24 @@ pointer ROSEUS_ACTION_TAKE_CANCEL_REQUEST(register context *ctx, int n, pointer 
 
   vpush(eus_request);
   bool ok = cStructToEusMsg(req_buf.data(),
-    data.action_ts->cancel_service_type_support->request_typesupport,
-    eus_request);
+                            data.action_ts->cancel_service_type_support->request_typesupport,
+                            eus_request);
   vpop();
   req_members->fini_function(req_buf.data());
   return ok ? T : NIL;
 }
 
-pointer ROSEUS_ACTION_SEND_CANCEL_RESPONSE(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_SEND_CANCEL_RESPONSE(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(2);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
   pointer eus_response = argv[1];
 
   auto it = s_mapActionServers.find(action_name);
   if (it == s_mapActionServers.end()) return (NIL);
-  auto &data = *it->second;
+  auto& data = *it->second;
 
   auto resp_members = data.cancel_svc_intro->response_members_;
   vector<uint8_t> resp_buf;
@@ -2654,7 +2610,7 @@ pointer ROSEUS_ACTION_SEND_CANCEL_RESPONSE(register context *ctx, int n, pointer
   vpop();
 
   rcl_ret_t rc = rcl_action_send_cancel_response(
-    &data.server, &data.last_cancel_request_header, resp_buf.data());
+      &data.server, &data.last_cancel_request_header, resp_buf.data());
   resp_members->fini_function(resp_buf.data());
 
   if (rc != RCL_RET_OK) {
@@ -2664,35 +2620,33 @@ pointer ROSEUS_ACTION_SEND_CANCEL_RESPONSE(register context *ctx, int n, pointer
   return (T);
 }
 
-pointer ROSEUS_ACTION_UPDATE_GOAL_STATE(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_UPDATE_GOAL_STATE(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(3);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
   int handle_idx = ckintval(argv[1]);
   int goal_event = ckintval(argv[2]);
 
   auto it = s_mapActionServers.find(action_name);
   if (it == s_mapActionServers.end()) return (NIL);
-  auto &data = *it->second;
+  auto& data = *it->second;
 
   if (handle_idx < 0 || handle_idx >= (int)data.goal_handles.size()) return (NIL);
 
   rcl_ret_t rc = rcl_action_update_goal_state(
-    data.goal_handles[handle_idx],
-    static_cast<rcl_action_goal_event_t>(goal_event));
+      data.goal_handles[handle_idx],
+      static_cast<rcl_action_goal_event_t>(goal_event));
 
   return (rc == RCL_RET_OK) ? T : NIL;
 }
 
-pointer ROSEUS_ACTION_NOTIFY_GOAL_DONE(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_ACTION_NOTIFY_GOAL_DONE(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(1);
   string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char *)get_string(argv[0]));
+  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
 
   auto it = s_mapActionServers.find(action_name);
@@ -2706,28 +2660,25 @@ pointer ROSEUS_ACTION_NOTIFY_GOAL_DONE(register context *ctx, int n, pointer *ar
  *   Stub functions (ROS 1 compatibility)
  ************************************************************/
 
-pointer ROSEUS_GET_HOST(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_GET_HOST(register context* ctx, int n, pointer* argv) {
   ckarg(0);
   RCLCPP_WARN(rclcpp::get_logger("roseus"),
               "get-host is not supported in ROS 2 (no master)");
-  return makestring((char *)"", 0);
+  return makestring((char*)"", 0);
 }
 
-pointer ROSEUS_GET_PORT(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_GET_PORT(register context* ctx, int n, pointer* argv) {
   ckarg(0);
   RCLCPP_WARN(rclcpp::get_logger("roseus"),
               "get-port is not supported in ROS 2 (no master)");
   return makeint(0);
 }
 
-pointer ROSEUS_GET_URI(register context *ctx, int n, pointer *argv)
-{
+pointer ROSEUS_GET_URI(register context* ctx, int n, pointer* argv) {
   ckarg(0);
   RCLCPP_WARN(rclcpp::get_logger("roseus"),
               "get-uri is not supported in ROS 2 (no master)");
-  return makestring((char *)"", 0);
+  return makestring((char*)"", 0);
 }
 
 /***********************************************************
@@ -2736,8 +2687,7 @@ pointer ROSEUS_GET_URI(register context *ctx, int n, pointer *argv)
 
 extern pointer K_FUNCTION_DOCUMENTATION;
 
-pointer ___roseus(register context *ctx, int n, pointer *argv, pointer env)
-{
+pointer ___roseus(register context* ctx, int n, pointer* argv, pointer env) {
   pointer rospkg, p = Spevalof(PACKAGE);
   rospkg = findpkg(makestring("ROS", 3));
   if (rospkg == 0) rospkg = makepkg(ctx, makestring("ROS", 3), NIL, NIL);
@@ -2754,7 +2704,7 @@ pointer ___roseus(register context *ctx, int n, pointer *argv, pointer env)
 
   // Version info (used by roseus.l for startup message)
   {
-    const char *ver = ROSEUS_VERSION_STR;
+    const char* ver = ROSEUS_VERSION_STR;
     pointer l = makestring((char*)ver, strlen(ver));
     vpush(l);
     l = stacknlist(ctx, 1);
@@ -2762,164 +2712,164 @@ pointer ___roseus(register context *ctx, int n, pointer *argv, pointer env)
   }
 
   // Core functions
-  defun(ctx, "ROSEUS-RAW", argv[0], (pointer (*)())ROSEUS, "");
-  defun(ctx, "SPIN", argv[0], (pointer (*)())ROSEUS_SPIN, "Enter simple event loop");
-  defun(ctx, "SPIN-ONCE", argv[0], (pointer (*)())ROSEUS_SPINONCE,
+  defun(ctx, "ROSEUS-RAW", argv[0], (pointer(*)())ROSEUS, "");
+  defun(ctx, "SPIN", argv[0], (pointer(*)())ROSEUS_SPIN, "Enter simple event loop");
+  defun(ctx, "SPIN-ONCE", argv[0], (pointer(*)())ROSEUS_SPINONCE,
         "&optional groupname  ;; spin only group\n\n"
         "Process a single round of callbacks.\n");
-  defun(ctx, "TIME-NOW-RAW", argv[0], (pointer (*)())ROSEUS_TIME_NOW, "");
-  defun(ctx, "RATE", argv[0], (pointer (*)())ROSEUS_RATE,
+  defun(ctx, "TIME-NOW-RAW", argv[0], (pointer(*)())ROSEUS_TIME_NOW, "");
+  defun(ctx, "RATE", argv[0], (pointer(*)())ROSEUS_RATE,
         "frequency\n\nConstruct ros timer for periodic sleeps");
-  defun(ctx, "SLEEP", argv[0], (pointer (*)())ROSEUS_SLEEP,
+  defun(ctx, "SLEEP", argv[0], (pointer(*)())ROSEUS_SLEEP,
         "Sleeps for any leftover time in a cycle.");
-  defun(ctx, "DURATION-SLEEP", argv[0], (pointer (*)())ROSEUS_DURATION_SLEEP,
+  defun(ctx, "DURATION-SLEEP", argv[0], (pointer(*)())ROSEUS_DURATION_SLEEP,
         "second\n\nSleeps for amount of the time specified by this duration.");
-  defun(ctx, "OK", argv[0], (pointer (*)())ROSEUS_OK,
+  defun(ctx, "OK", argv[0], (pointer(*)())ROSEUS_OK,
         "Check whether it's time to exit.");
 
   // Logging
-  defun(ctx, "ROS-DEBUG", argv[0], (pointer (*)())ROSEUS_ROSDEBUG,
+  defun(ctx, "ROS-DEBUG", argv[0], (pointer(*)())ROSEUS_ROSDEBUG,
         "write message to debug output");
-  defun(ctx, "ROS-INFO", argv[0], (pointer (*)())ROSEUS_ROSINFO,
+  defun(ctx, "ROS-INFO", argv[0], (pointer(*)())ROSEUS_ROSINFO,
         "write message to info output");
-  defun(ctx, "ROS-WARN", argv[0], (pointer (*)())ROSEUS_ROSWARN,
+  defun(ctx, "ROS-WARN", argv[0], (pointer(*)())ROSEUS_ROSWARN,
         "write message to warn output");
-  defun(ctx, "ROS-ERROR", argv[0], (pointer (*)())ROSEUS_ROSERROR,
+  defun(ctx, "ROS-ERROR", argv[0], (pointer(*)())ROSEUS_ROSERROR,
         "write message to error output");
-  defun(ctx, "ROS-FATAL", argv[0], (pointer (*)())ROSEUS_ROSFATAL,
+  defun(ctx, "ROS-FATAL", argv[0], (pointer(*)())ROSEUS_ROSFATAL,
         "write message to fatal output");
-  defun(ctx, "SET-LOGGER-LEVEL", argv[0], (pointer (*)())ROSEUS_SET_LOGGER_LEVEL, "");
-  defun(ctx, "EXIT", argv[0], (pointer (*)())ROSEUS_EXIT, "Exit ros client");
+  defun(ctx, "SET-LOGGER-LEVEL", argv[0], (pointer(*)())ROSEUS_SET_LOGGER_LEVEL, "");
+  defun(ctx, "EXIT", argv[0], (pointer(*)())ROSEUS_EXIT, "Exit ros client");
 
   // Pub/Sub
-  defun(ctx, "SUBSCRIBE", argv[0], (pointer (*)())ROSEUS_SUBSCRIBE,
+  defun(ctx, "SUBSCRIBE", argv[0], (pointer(*)())ROSEUS_SUBSCRIBE,
         "topicname message_type callbackfunc args0 ... argsN "
         "&optional (queuesize 1) &key (:groupname groupname)\n\n"
         "Subscribe to a topic.\n");
-  defun(ctx, "UNSUBSCRIBE", argv[0], (pointer (*)())ROSEUS_UNSUBSCRIBE,
+  defun(ctx, "UNSUBSCRIBE", argv[0], (pointer(*)())ROSEUS_UNSUBSCRIBE,
         "topicname\n\nUnsubscribe topic");
-  defun(ctx, "ADVERTISE", argv[0], (pointer (*)())ROSEUS_ADVERTISE,
+  defun(ctx, "ADVERTISE", argv[0], (pointer(*)())ROSEUS_ADVERTISE,
         "topic message_class &optional (queuesize 1) (latch nil)\n\n"
         "Advertise a topic.\n");
-  defun(ctx, "UNADVERTISE", argv[0], (pointer (*)())ROSEUS_UNADVERTISE,
+  defun(ctx, "UNADVERTISE", argv[0], (pointer(*)())ROSEUS_UNADVERTISE,
         "Unadvertise topic");
-  defun(ctx, "PUBLISH", argv[0], (pointer (*)())ROSEUS_PUBLISH,
+  defun(ctx, "PUBLISH", argv[0], (pointer(*)())ROSEUS_PUBLISH,
         "topic message\n\nPublish a message on the topic\n");
-  defun(ctx, "GET-NUM-PUBLISHERS", argv[0], (pointer (*)())ROSEUS_GETNUMPUBLISHERS,
+  defun(ctx, "GET-NUM-PUBLISHERS", argv[0], (pointer(*)())ROSEUS_GETNUMPUBLISHERS,
         "Returns the number of publishers on a topic.");
-  defun(ctx, "GET-NUM-SUBSCRIBERS", argv[0], (pointer (*)())ROSEUS_GETNUMSUBSCRIBERS,
+  defun(ctx, "GET-NUM-SUBSCRIBERS", argv[0], (pointer(*)())ROSEUS_GETNUMSUBSCRIBERS,
         "Returns the number of subscribers on a topic.");
 
   // Services
-  defun(ctx, "WAIT-FOR-SERVICE", argv[0], (pointer (*)())ROSEUS_WAIT_FOR_SERVICE,
+  defun(ctx, "WAIT-FOR-SERVICE", argv[0], (pointer(*)())ROSEUS_WAIT_FOR_SERVICE,
         "servicename &optional timeout\n\n"
         "Wait for a service to be advertised and available.");
-  defun(ctx, "SERVICE-EXISTS", argv[0], (pointer (*)())ROSEUS_SERVICE_EXISTS,
+  defun(ctx, "SERVICE-EXISTS", argv[0], (pointer(*)())ROSEUS_SERVICE_EXISTS,
         "servicename\n\nChecks if a service is advertised.");
-  defun(ctx, "SERVICE-CALL", argv[0], (pointer (*)())ROSEUS_SERVICE_CALL,
+  defun(ctx, "SERVICE-CALL", argv[0], (pointer(*)())ROSEUS_SERVICE_CALL,
         "servicename message_type &optional persist\n\nInvoke RPC service\n");
-  defun(ctx, "ADVERTISE-SERVICE", argv[0], (pointer (*)())ROSEUS_ADVERTISE_SERVICE,
+  defun(ctx, "ADVERTISE-SERVICE", argv[0], (pointer(*)())ROSEUS_ADVERTISE_SERVICE,
         "servicename message_type callbackfunc args0 ... argsN "
         "&key (:groupname groupname)\n\nAdvertise a service\n");
-  defun(ctx, "UNADVERTISE-SERVICE", argv[0], (pointer (*)())ROSEUS_UNADVERTISE_SERVICE,
+  defun(ctx, "UNADVERTISE-SERVICE", argv[0], (pointer(*)())ROSEUS_UNADVERTISE_SERVICE,
         "Unadvertise service");
 
   // Parameters
-  defun(ctx, "SET-PARAM", argv[0], (pointer (*)())ROSEUS_SET_PARAM,
+  defun(ctx, "SET-PARAM", argv[0], (pointer(*)())ROSEUS_SET_PARAM,
         "key value\n\nSet parameter");
-  defun(ctx, "GET-PARAM", argv[0], (pointer (*)())ROSEUS_GET_PARAM,
+  defun(ctx, "GET-PARAM", argv[0], (pointer(*)())ROSEUS_GET_PARAM,
         "key\n\nGet parameter");
-  defun(ctx, "HAS-PARAM", argv[0], (pointer (*)())ROSEUS_HAS_PARAM,
+  defun(ctx, "HAS-PARAM", argv[0], (pointer(*)())ROSEUS_HAS_PARAM,
         "Check whether a parameter exists.");
-  defun(ctx, "DELETE-PARAM", argv[0], (pointer (*)())ROSEUS_DELETE_PARAM,
+  defun(ctx, "DELETE-PARAM", argv[0], (pointer(*)())ROSEUS_DELETE_PARAM,
         "key\n\nDelete parameter");
 
   // Package utilities
-  defun(ctx, "ROSPACK-FIND", argv[0], (pointer (*)())ROSEUS_ROSPACK_FIND,
+  defun(ctx, "ROSPACK-FIND", argv[0], (pointer(*)())ROSEUS_ROSPACK_FIND,
         "Returns ros package share directory path");
-  defun(ctx, "ROSPACK-DEPENDS", argv[0], (pointer (*)())ROSEUS_ROSPACK_DEPENDS,
+  defun(ctx, "ROSPACK-DEPENDS", argv[0], (pointer(*)())ROSEUS_ROSPACK_DEPENDS,
         "Returns ros package dependencies list (stub in ROS 2)");
-  defun(ctx, "ROSPACK-PLUGINS", argv[0], (pointer (*)())ROSEUS_ROSPACK_PLUGINS,
+  defun(ctx, "ROSPACK-PLUGINS", argv[0], (pointer(*)())ROSEUS_ROSPACK_PLUGINS,
         "Returns plugins of ros packages (stub in ROS 2)");
 
   // Name resolution / Discovery
-  defun(ctx, "RESOLVE-NAME", argv[0], (pointer (*)())ROSEUS_RESOLVE_NAME,
+  defun(ctx, "RESOLVE-NAME", argv[0], (pointer(*)())ROSEUS_RESOLVE_NAME,
         "Returns ros resolved name");
-  defun(ctx, "GET-NAME", argv[0], (pointer (*)())ROSEUS_GETNAME,
+  defun(ctx, "GET-NAME", argv[0], (pointer(*)())ROSEUS_GETNAME,
         "Returns current node name");
-  defun(ctx, "GET-NAMESPACE", argv[0], (pointer (*)())ROSEUS_GETNAMESPACE,
+  defun(ctx, "GET-NAMESPACE", argv[0], (pointer(*)())ROSEUS_GETNAMESPACE,
         "Returns current node namespace");
-  defun(ctx, "GET-TOPICS", argv[0], (pointer (*)())ROSEUS_GET_TOPICS,
+  defun(ctx, "GET-TOPICS", argv[0], (pointer(*)())ROSEUS_GET_TOPICS,
         "Get the list of topics.");
-  defun(ctx, "GET-NODES", argv[0], (pointer (*)())ROSEUS_GET_NODES,
+  defun(ctx, "GET-NODES", argv[0], (pointer(*)())ROSEUS_GET_NODES,
         "Get the list of nodes.");
 
   // Timer / Callback Group
-  defun(ctx, "CREATE-TIMER", argv[0], (pointer (*)())ROSEUS_CREATE_TIMER,
+  defun(ctx, "CREATE-TIMER", argv[0], (pointer(*)())ROSEUS_CREATE_TIMER,
         "period callbackfunc args0 ... argsN "
         "&key (:oneshot oneshot) (:groupname groupname)\n\n"
         "Create periodic callbacks.\n");
-  defun(ctx, "CREATE-NODEHANDLE", argv[0], (pointer (*)())ROSEUS_CREATE_NODEHANDLE,
+  defun(ctx, "CREATE-NODEHANDLE", argv[0], (pointer(*)())ROSEUS_CREATE_NODEHANDLE,
         "groupname &optional namespace\n\nCreate callback group with given group name.\n");
 
   // Action Client
-  defun(ctx, "ACTION-CLIENT-INIT", argv[0], (pointer (*)())ROSEUS_ACTION_CLIENT_INIT,
+  defun(ctx, "ACTION-CLIENT-INIT", argv[0], (pointer(*)())ROSEUS_ACTION_CLIENT_INIT,
         "action-name action-type\n\nInitialize action client.\n");
-  defun(ctx, "ACTION-CLIENT-DESTROY", argv[0], (pointer (*)())ROSEUS_ACTION_CLIENT_DESTROY,
+  defun(ctx, "ACTION-CLIENT-DESTROY", argv[0], (pointer(*)())ROSEUS_ACTION_CLIENT_DESTROY,
         "action-name\n\nDestroy action client.\n");
-  defun(ctx, "ACTION-WAIT-FOR-SERVER", argv[0], (pointer (*)())ROSEUS_ACTION_WAIT_FOR_SERVER,
+  defun(ctx, "ACTION-WAIT-FOR-SERVER", argv[0], (pointer(*)())ROSEUS_ACTION_WAIT_FOR_SERVER,
         "action-name &optional timeout\n\nWait for action server to be available.\n");
-  defun(ctx, "ACTION-SEND-GOAL", argv[0], (pointer (*)())ROSEUS_ACTION_SEND_GOAL,
+  defun(ctx, "ACTION-SEND-GOAL", argv[0], (pointer(*)())ROSEUS_ACTION_SEND_GOAL,
         "action-name goal-request\n\nSend goal request. Returns sequence number.\n");
-  defun(ctx, "ACTION-TAKE-GOAL-RESPONSE", argv[0], (pointer (*)())ROSEUS_ACTION_TAKE_GOAL_RESPONSE,
+  defun(ctx, "ACTION-TAKE-GOAL-RESPONSE", argv[0], (pointer(*)())ROSEUS_ACTION_TAKE_GOAL_RESPONSE,
         "action-name response-instance\n\nTake goal response.\n");
-  defun(ctx, "ACTION-SEND-RESULT-REQUEST", argv[0], (pointer (*)())ROSEUS_ACTION_SEND_RESULT_REQUEST,
+  defun(ctx, "ACTION-SEND-RESULT-REQUEST", argv[0], (pointer(*)())ROSEUS_ACTION_SEND_RESULT_REQUEST,
         "action-name result-request\n\nSend result request.\n");
-  defun(ctx, "ACTION-TAKE-RESULT-RESPONSE", argv[0], (pointer (*)())ROSEUS_ACTION_TAKE_RESULT_RESPONSE,
+  defun(ctx, "ACTION-TAKE-RESULT-RESPONSE", argv[0], (pointer(*)())ROSEUS_ACTION_TAKE_RESULT_RESPONSE,
         "action-name response-instance\n\nTake result response.\n");
-  defun(ctx, "ACTION-TAKE-FEEDBACK", argv[0], (pointer (*)())ROSEUS_ACTION_TAKE_FEEDBACK,
+  defun(ctx, "ACTION-TAKE-FEEDBACK", argv[0], (pointer(*)())ROSEUS_ACTION_TAKE_FEEDBACK,
         "action-name feedback-instance\n\nTake feedback message.\n");
-  defun(ctx, "ACTION-TAKE-STATUS", argv[0], (pointer (*)())ROSEUS_ACTION_TAKE_STATUS,
+  defun(ctx, "ACTION-TAKE-STATUS", argv[0], (pointer(*)())ROSEUS_ACTION_TAKE_STATUS,
         "action-name status-instance\n\nTake status array.\n");
-  defun(ctx, "ACTION-SEND-CANCEL", argv[0], (pointer (*)())ROSEUS_ACTION_SEND_CANCEL,
+  defun(ctx, "ACTION-SEND-CANCEL", argv[0], (pointer(*)())ROSEUS_ACTION_SEND_CANCEL,
         "action-name cancel-request\n\nSend cancel request.\n");
-  defun(ctx, "ACTION-TAKE-CANCEL-RESPONSE", argv[0], (pointer (*)())ROSEUS_ACTION_TAKE_CANCEL_RESPONSE,
+  defun(ctx, "ACTION-TAKE-CANCEL-RESPONSE", argv[0], (pointer(*)())ROSEUS_ACTION_TAKE_CANCEL_RESPONSE,
         "action-name response-instance\n\nTake cancel response.\n");
 
   // Action Server
-  defun(ctx, "ACTION-SERVER-INIT", argv[0], (pointer (*)())ROSEUS_ACTION_SERVER_INIT,
+  defun(ctx, "ACTION-SERVER-INIT", argv[0], (pointer(*)())ROSEUS_ACTION_SERVER_INIT,
         "action-name action-type\n\nInitialize action server.\n");
-  defun(ctx, "ACTION-SERVER-DESTROY", argv[0], (pointer (*)())ROSEUS_ACTION_SERVER_DESTROY,
+  defun(ctx, "ACTION-SERVER-DESTROY", argv[0], (pointer(*)())ROSEUS_ACTION_SERVER_DESTROY,
         "action-name\n\nDestroy action server.\n");
-  defun(ctx, "ACTION-TAKE-GOAL-REQUEST", argv[0], (pointer (*)())ROSEUS_ACTION_TAKE_GOAL_REQUEST,
+  defun(ctx, "ACTION-TAKE-GOAL-REQUEST", argv[0], (pointer(*)())ROSEUS_ACTION_TAKE_GOAL_REQUEST,
         "action-name request-instance\n\nTake goal request (server side).\n");
-  defun(ctx, "ACTION-SEND-GOAL-RESPONSE", argv[0], (pointer (*)())ROSEUS_ACTION_SEND_GOAL_RESPONSE,
+  defun(ctx, "ACTION-SEND-GOAL-RESPONSE", argv[0], (pointer(*)())ROSEUS_ACTION_SEND_GOAL_RESPONSE,
         "action-name response\n\nSend goal response (server side).\n");
-  defun(ctx, "ACTION-ACCEPT-NEW-GOAL", argv[0], (pointer (*)())ROSEUS_ACTION_ACCEPT_NEW_GOAL,
+  defun(ctx, "ACTION-ACCEPT-NEW-GOAL", argv[0], (pointer(*)())ROSEUS_ACTION_ACCEPT_NEW_GOAL,
         "action-name uuid-string\n\nAccept new goal. Returns handle index.\n");
-  defun(ctx, "ACTION-PUBLISH-FEEDBACK", argv[0], (pointer (*)())ROSEUS_ACTION_PUBLISH_FEEDBACK,
+  defun(ctx, "ACTION-PUBLISH-FEEDBACK", argv[0], (pointer(*)())ROSEUS_ACTION_PUBLISH_FEEDBACK,
         "action-name feedback-msg\n\nPublish feedback (server side).\n");
-  defun(ctx, "ACTION-PUBLISH-STATUS", argv[0], (pointer (*)())ROSEUS_ACTION_PUBLISH_STATUS,
+  defun(ctx, "ACTION-PUBLISH-STATUS", argv[0], (pointer(*)())ROSEUS_ACTION_PUBLISH_STATUS,
         "action-name\n\nPublish status (server side).\n");
-  defun(ctx, "ACTION-TAKE-RESULT-REQUEST", argv[0], (pointer (*)())ROSEUS_ACTION_TAKE_RESULT_REQUEST,
+  defun(ctx, "ACTION-TAKE-RESULT-REQUEST", argv[0], (pointer(*)())ROSEUS_ACTION_TAKE_RESULT_REQUEST,
         "action-name request-instance\n\nTake result request (server side).\n");
-  defun(ctx, "ACTION-SEND-RESULT-RESPONSE", argv[0], (pointer (*)())ROSEUS_ACTION_SEND_RESULT_RESPONSE,
+  defun(ctx, "ACTION-SEND-RESULT-RESPONSE", argv[0], (pointer(*)())ROSEUS_ACTION_SEND_RESULT_RESPONSE,
         "action-name response\n\nSend result response (server side).\n");
-  defun(ctx, "ACTION-TAKE-CANCEL-REQUEST", argv[0], (pointer (*)())ROSEUS_ACTION_TAKE_CANCEL_REQUEST,
+  defun(ctx, "ACTION-TAKE-CANCEL-REQUEST", argv[0], (pointer(*)())ROSEUS_ACTION_TAKE_CANCEL_REQUEST,
         "action-name request-instance\n\nTake cancel request (server side).\n");
-  defun(ctx, "ACTION-SEND-CANCEL-RESPONSE", argv[0], (pointer (*)())ROSEUS_ACTION_SEND_CANCEL_RESPONSE,
+  defun(ctx, "ACTION-SEND-CANCEL-RESPONSE", argv[0], (pointer(*)())ROSEUS_ACTION_SEND_CANCEL_RESPONSE,
         "action-name response\n\nSend cancel response (server side).\n");
-  defun(ctx, "ACTION-UPDATE-GOAL-STATE", argv[0], (pointer (*)())ROSEUS_ACTION_UPDATE_GOAL_STATE,
+  defun(ctx, "ACTION-UPDATE-GOAL-STATE", argv[0], (pointer(*)())ROSEUS_ACTION_UPDATE_GOAL_STATE,
         "action-name handle-index goal-event\n\nUpdate goal state.\n");
-  defun(ctx, "ACTION-NOTIFY-GOAL-DONE", argv[0], (pointer (*)())ROSEUS_ACTION_NOTIFY_GOAL_DONE,
+  defun(ctx, "ACTION-NOTIFY-GOAL-DONE", argv[0], (pointer(*)())ROSEUS_ACTION_NOTIFY_GOAL_DONE,
         "action-name\n\nNotify that goal is done.\n");
 
   // Stubs for ROS 1 compatibility
-  defun(ctx, "GET-HOST", argv[0], (pointer (*)())ROSEUS_GET_HOST,
+  defun(ctx, "GET-HOST", argv[0], (pointer(*)())ROSEUS_GET_HOST,
         "Get the hostname where the master runs. (stub in ROS 2)");
-  defun(ctx, "GET-PORT", argv[0], (pointer (*)())ROSEUS_GET_PORT,
+  defun(ctx, "GET-PORT", argv[0], (pointer(*)())ROSEUS_GET_PORT,
         "Get the port where the master runs. (stub in ROS 2)");
-  defun(ctx, "GET-URI", argv[0], (pointer (*)())ROSEUS_GET_URI,
+  defun(ctx, "GET-URI", argv[0], (pointer(*)())ROSEUS_GET_URI,
         "Get the full URI to the master. (stub in ROS 2)");
 
   pointer_update(Spevalof(PACKAGE), p);
