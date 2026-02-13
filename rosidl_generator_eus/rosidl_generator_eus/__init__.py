@@ -1183,18 +1183,25 @@ def _write_serialization_length_cdr(s, fields):
                                     f'{f.array_len})',
                                     newline=False)
                         else:
-                            # Subtract 4*N for CDR headers of nested
-                            # messages (no sub-headers in DDS CDR)
+                            # Subtract 4 per element for CDR headers of
+                            # nested messages (no sub-headers in DDS CDR).
+                            # Use mapcar to compute (len - 4) per element
+                            # so that apply #'+ receives a proper list
+                            # (also handles empty sequences correctly).
                             if f.array_len:
                                 s.write(
-                                    f'(- (send-all _{f.name}'
-                                    f' :serialization-length-cdr))'
-                                    f' (* 4 {f.array_len}))')
+                                    f'(mapcar'
+                                    f' #\'(lambda (x)'
+                                    f' (- (send x'
+                                    f' :serialization-length-cdr) 4))'
+                                    f' _{f.name}))')
                             else:
                                 s.write(
-                                    f'(- (send-all _{f.name}'
-                                    f' :serialization-length-cdr))'
-                                    f' (* 4 (length _{f.name}))) 4')
+                                    f'(mapcar'
+                                    f' #\'(lambda (x)'
+                                    f' (- (send x'
+                                    f' :serialization-length-cdr) 4))'
+                                    f' _{f.name})) 4')
                     else:
                         if f.is_builtin:
                             _write_cdr_builtin_length(s, f)
