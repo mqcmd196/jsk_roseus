@@ -8,5 +8,5 @@ find_package(rosidl_cmake QUIET)
 
 if(rosidl_generator_eus_FOUND AND rosidl_cmake_FOUND)
   ament_register_extension("ament_package" "roseus"
-    "${CMAKE_CURRENT_LIST_DIR}/roseus_generate_dep_msgs.cmake")
+    "roseus_generate_dep_msgs.cmake")
 endif()
