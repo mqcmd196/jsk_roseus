@@ -9,11 +9,6 @@ ament_index_register_resource("rosidl_generator_packages")
 
 ament_python_install_package(${PROJECT_NAME})
 
-if(BUILD_TESTING)
-  find_package(ament_lint_auto REQUIRED)
-  ament_lint_auto_find_test_dependencies()
-endif()
-
 ament_package(
   CONFIG_EXTRAS "rosidl_generator_eus-extras.cmake.in"
 )
