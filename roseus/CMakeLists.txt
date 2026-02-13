@@ -62,7 +62,7 @@ if(BUILD_TESTING)
     set(_test_eus_l_dir "${CMAKE_CURRENT_BINARY_DIR}/rosidl_generator_eus/${PROJECT_NAME}")
     add_test(
       NAME test_rosidl_generator_eus
-      COMMAND ${EUS_EXECUTABLE}
+      COMMAND roseus
         ${CMAKE_CURRENT_SOURCE_DIR}/test/test-rosidl-generator-eus.l
         ${_test_eus_l_dir}
     )
