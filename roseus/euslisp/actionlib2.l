@@ -151,6 +151,9 @@
          (let ((uuid-bytes (send (send s :goal_info) :goal_id :uuid)))
            (when (and current-uuid (equal uuid-bytes current-uuid))
              (setq current-goal-status (send s :status)))))))
+   ;; Try to take cancel response (must be consumed after cancel-goal)
+   (let ((resp (instance action_msgs::CancelGoalResponse :init)))
+     (ros::action-take-cancel-response name-space resp))
    ;; Try to take result response
    (let ((resp (instance (get get-result-service :response) :init)))
      (when (ros::action-take-result-response name-space resp)
@@ -330,6 +333,7 @@
          (send self :send-pending-result)))))
   ;;
   (:goal () "Get the current goal." current-goal)
+  (:goal-handle () "Get the current goal handle." current-goal-handle)
   ;;
   (:is-active ()
    "Check if a goal is currently active."
