@@ -4,10 +4,7 @@
 ;;;
 
 (ros::load-ros-manifest "roseus")
-;;;
 
-;;;
-;;;
 (ros::roseus "listener" :anonymous t)
 ;;(setq sys::*gc-hook* #'(lambda (a b) (format t ";; gc ~A ~A~%" a b)))
 

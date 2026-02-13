@@ -7,7 +7,7 @@ find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 
 install(
-  PROGRAMS src/listener.l src/talker.l
+  DIRECTORY src
   DESTINATION lib/${PROJECT_NAME}
 )
 
