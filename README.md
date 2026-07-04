@@ -51,6 +51,21 @@ To use euslisp built from source, we need to create upstream workspace and then 
     catkin build roseus
     source ~/ros/$ROS_DISTRO/devel/setup.bash
     ```
+### ROS 2 (jazzy)
+
+ROS 2 is supported through `rosidl_generator_eus` and the ROS 2 binding in `roseus`.
+jskeus must be installed first.
+
+Please set `EUSDIR` to the `eus` directory of a JSKEus installation.
+Then build and run roseus from a ROS 2 workspace.
+
+```bash
+source /opt/ros/$ROS_DISTRO/setup.bash
+cd ~/colcon_ws
+colcon build --packages-up-to roseus
+source install/setup.bash
+roseus
+```
 
 ## Deb Status
 

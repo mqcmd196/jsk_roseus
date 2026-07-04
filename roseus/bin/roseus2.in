@@ -1,11 +1,16 @@
 #!/bin/bash
 set -e
 
-# Find EusLisp executable
-if [ -z "$EUSDIR" ]; then
-  EUSDIR=@EUSDIR@
+# Prefer an explicitly selected EusLisp installation.
+EUSLISP_EXE=""
+if [ -n "$EUSDIR" ]; then
+  EUSLISP_EXE=$(find -L "$EUSDIR" -type f -name irteusgl 2>/dev/null | head -1)
 fi
-EUSLISP_EXE=$(find -L $EUSDIR -type f -name irteusgl 2>/dev/null | head -1)
+
+# Use the executable found when roseus was built.
+if [ -z "$EUSLISP_EXE" ] && [ -x "@IRTEUSGL_EXECUTABLE@" ]; then
+  EUSLISP_EXE="@IRTEUSGL_EXECUTABLE@"
+fi
 
 # Fallback: look for irteusgl on PATH
 if [ -z "$EUSLISP_EXE" ]; then
@@ -13,9 +18,20 @@ if [ -z "$EUSLISP_EXE" ]; then
 fi
 
 if [ -z "$EUSLISP_EXE" ]; then
-  echo "Error: could not find irteusgl executable in $EUSDIR or on PATH" >&2
+  echo "Error: could not find irteusgl; set EUSDIR to a JSKEus installation" >&2
   exit 1
 fi
+
+# JSKEus binaries load libraries and Lisp files relative to EUSDIR/ARCHDIR.
+# Export these here so sourcing a ROS 1 installation is not required.
+if [ -z "$EUSDIR" ]; then
+  EUSDIR="@EUSDIR@"
+fi
+if [ -z "$ARCHDIR" ]; then
+  ARCHDIR=$(basename "$(dirname "$(dirname "$EUSLISP_EXE")")")
+fi
+export EUSDIR ARCHDIR
+export LD_LIBRARY_PATH="$EUSDIR/$ARCHDIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 # Find roseus share directory from AMENT_PREFIX_PATH
 ROSEUS_DIR=""

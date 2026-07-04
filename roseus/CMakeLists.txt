@@ -6,19 +6,30 @@ find_package(ament_cmake_auto REQUIRED)
 
 ament_auto_find_build_dependencies()
 
-set(ENV_EUSDIR $ENV{EUSDIR})
-if(ENV_EUSDIR)
-  set(EUSDIR $ENV_EUSDIR)
-else()
-  set(EUSDIR /usr/share/euslisp) # for debian/ubuntu default package
+set(_eusdir_hints
+  "$ENV{EUSDIR}"
+  "/opt/ros/one/share/euslisp/jskeus/eus"
+  "/usr/share/euslisp"
+)
+find_path(euslisp_INCLUDE_DIRS
+  NAMES eus.h
+  HINTS ${_eusdir_hints}
+  PATH_SUFFIXES include lisp/c
+)
+find_program(IRTEUSGL_EXECUTABLE
+  NAMES irteusgl
+  HINTS ${_eusdir_hints}
+  PATH_SUFFIXES Linux64/bin LinuxARM/bin Darwin/bin bin
+)
+if(NOT euslisp_INCLUDE_DIRS OR NOT IRTEUSGL_EXECUTABLE)
+  message(FATAL_ERROR
+    "EusLisp/JSKEus not found. Set EUSDIR to the JSKEus eus directory")
 endif()
-
-if(EXISTS ${EUSDIR})
-  message(STATUS "Found EusLisp: ${EUSDIR}")
-else()
-  message(FATAL_ERROR "EusLisp not found")
-endif()
-set(euslisp_INCLUDE_DIRS ${EUSDIR}/include)
+get_filename_component(_eus_bin_dir "${IRTEUSGL_EXECUTABLE}" DIRECTORY)
+get_filename_component(_eus_arch_dir "${_eus_bin_dir}" DIRECTORY)
+get_filename_component(EUSDIR "${_eus_arch_dir}" DIRECTORY)
+message(STATUS "Found EusLisp headers: ${euslisp_INCLUDE_DIRS}")
+message(STATUS "Found JSKEus executable: ${IRTEUSGL_EXECUTABLE}")
 
 ament_auto_add_library(roseus SHARED roseus2.cpp)
 
@@ -57,10 +68,13 @@ endforeach()
 
 if(BUILD_TESTING)
   ament_auto_find_test_dependencies()
-  ament_clang_format(
-    CONFIG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/.clang-format"
-    roseus2.cpp
-  )
+  if(ament_cmake_clang_format_FOUND)
+    ament_clang_format(
+      CONFIG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/.clang-format"
+      roseus2.cpp
+    )
+  endif()
+  find_package(launch_testing_ament_cmake REQUIRED)
   set(_test_eus_l_dir "${CMAKE_CURRENT_BINARY_DIR}/rosidl_generator_eus/${PROJECT_NAME}")
   add_test(
     NAME test_rosidl_generator_eus
