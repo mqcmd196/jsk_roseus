@@ -51,20 +51,26 @@ To use euslisp built from source, we need to create upstream workspace and then 
     catkin build roseus
     source ~/ros/$ROS_DISTRO/devel/setup.bash
     ```
-### ROS 2 (jazzy)
 
-ROS 2 is supported through `rosidl_generator_eus` and the ROS 2 binding in `roseus`.
-jskeus must be installed first.
+### ROS 2 Jazzy on Ubuntu Noble
 
-Please set `EUSDIR` to the `eus` directory of a JSKEus installation.
-Then build and run roseus from a ROS 2 workspace.
+Ubuntu Noble does not provide `jskeus` in the standard archive.
+Use [k-okada's ppa](https://launchpad.net/~k-okada/+archive/ubuntu/euslisp) for `euslisp-dev`, `jskeus` and `jskeus-dev`
+before resolving the ROS package dependencies.
 
 ```bash
-source /opt/ros/$ROS_DISTRO/setup.bash
-cd ~/colcon_ws
-colcon build --packages-up-to roseus
+sudo apt update
+sudo apt install -y software-properties-common
+sudo add-apt-repository --yes ppa:k-okada/euslisp
+sudo apt update
+source /opt/ros/jazzy/setup.bash
+
+cd <path to your colcon workspace>
+rosdep update
+rosdep install --from-paths src --ignore-src -r -y
+
+colcon build --packages-select rosidl_generator_eus roseus --symlink-install
 source install/setup.bash
-roseus
 ```
 
 ## Deb Status
