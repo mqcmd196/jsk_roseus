@@ -48,8 +48,8 @@
   <depend condition="$ROS_VERSION == 1">geneus</depend>
   <depend condition="$ROS_VERSION == 1">euslisp</depend>
   <depend condition="$ROS_VERSION == 1">jskeus</depend>
-  <exec_depend condition="$ROS_VERSION == 2">euslisp</exec_depend>
-  <exec_depend condition="$ROS_VERSION == 2">jskeus</exec_depend>
+  <depend condition="$ROS_VERSION == 2">euslisp-dev</depend>
+  <depend condition="$ROS_VERSION == 2">jskeus-dev</depend>
   <depend condition="$ROS_VERSION == 1">actionlib</depend>
   <depend condition="$ROS_VERSION == 1">actionlib_msgs</depend>
   <depend>visualization_msgs</depend>
