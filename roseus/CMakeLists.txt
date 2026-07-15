@@ -24,7 +24,7 @@ ament_auto_add_library(roseus SHARED roseus2.cpp)
 
 ament_generate_version_header(roseus)
 target_compile_options(roseus
-  PRIVATE -O2 -DNDEBUG -DLinux -D_REENTRANT -DTHREADED -DPTHREAD -DX11R6_1 -Dx86_64 -Wno-comment -Wno-deprecated-declarations -fpermissive)
+  PRIVATE -O2 -DNDEBUG -DLinux -D_REENTRANT -DTHREADED -DPTHREAD -DX11R6_1 -Dx86_64 -Wno-comment -Wno-deprecated-declarations)
 target_include_directories(roseus PUBLIC ${euslisp_INCLUDE_DIRS})
 
 # Generate ROS 2 interfaces from .msg/.srv files
