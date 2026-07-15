@@ -6,11 +6,11 @@ find_package(ament_cmake_auto REQUIRED)
 
 ament_auto_find_build_dependencies()
 
-set(_eusdir_hints
-  "$ENV{EUSDIR}"
-  "/opt/ros/one/share/euslisp/jskeus/eus"
-  "/usr/share/euslisp"
-)
+set(_eusdir_hints)
+if(NOT "$ENV{EUSDIR}" STREQUAL "")
+  list(APPEND _eusdir_hints "$ENV{EUSDIR}")
+endif()
+list(APPEND _eusdir_hints "/usr/share/euslisp")
 find_path(euslisp_INCLUDE_DIRS
   NAMES eus.h
   HINTS ${_eusdir_hints}
@@ -25,9 +25,12 @@ if(NOT euslisp_INCLUDE_DIRS OR NOT IRTEUSGL_EXECUTABLE)
   message(FATAL_ERROR
     "EusLisp/JSKEus not found. Set EUSDIR to the JSKEus eus directory")
 endif()
-get_filename_component(_eus_bin_dir "${IRTEUSGL_EXECUTABLE}" DIRECTORY)
-get_filename_component(_eus_arch_dir "${_eus_bin_dir}" DIRECTORY)
-get_filename_component(EUSDIR "${_eus_arch_dir}" DIRECTORY)
+get_filename_component(_eus_include_parent "${euslisp_INCLUDE_DIRS}" DIRECTORY)
+if(_eus_include_parent MATCHES "/lisp$")
+  get_filename_component(EUSDIR "${_eus_include_parent}" DIRECTORY)
+else()
+  set(EUSDIR "${_eus_include_parent}")
+endif()
 message(STATUS "Found EusLisp headers: ${euslisp_INCLUDE_DIRS}")
 message(STATUS "Found JSKEus executable: ${IRTEUSGL_EXECUTABLE}")
 
@@ -35,7 +38,7 @@ ament_auto_add_library(roseus SHARED roseus2.cpp)
 
 ament_generate_version_header(roseus)
 target_compile_options(roseus
-  PRIVATE -O2 -DNDEBUG -DLinux -D_REENTRANT -DTHREADED -DPTHREAD -DX11R6_1 -Dx86_64 -Wno-comment -Wno-deprecated-declarations)
+  PRIVATE -O2 -DNDEBUG -DLinux -D_REENTRANT -DTHREADED -DPTHREAD -DX11R6_1 -Dx86_64 -Wno-comment -Wno-deprecated-declarations -fpermissive)
 target_include_directories(roseus PUBLIC ${euslisp_INCLUDE_DIRS})
 
 # Generate ROS 2 interfaces from .msg/.srv files
@@ -53,6 +56,10 @@ rosidl_generate_interfaces(${PROJECT_NAME}_interfaces
   action/Fibonacci.action
   DEPENDENCIES std_msgs builtin_interfaces action_msgs unique_identifier_msgs
 )
+if(UNIX AND NOT APPLE)
+  # roseus is loaded by the EusLisp runtime, which resolves these symbols.
+  string(APPEND CMAKE_SHARED_LINKER_FLAGS " -Wl,--unresolved-symbols=ignore-all")
+endif()
 
 # Create typesupport symlinks: runtime looks for roseus__* but libraries are roseus_interfaces__*
 # because rosidl_generate_interfaces target is named roseus_interfaces (to avoid name conflict)
