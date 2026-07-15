@@ -56,6 +56,8 @@ from rosidl_parser.parser import parse_idl_file
 from rosidl_parser.definition import IdlLocator
 
 
+# Copied from geneus.generate:
+# https://github.com/jsk-ros-pkg/geneus/blob/master/src/geneus/generate.py
 class IndentedWriter:
     """Write indented Lisp forms.
 
