@@ -68,8 +68,11 @@
 #include <rcutils/logging.h>
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <rosidl_typesupport_cpp/message_type_support.hpp>
+#include <rosidl_typesupport_introspection_c/service_introspection.h>
+#include <rosidl_typesupport_introspection_c/message_introspection.h>
 #include <rosidl_typesupport_introspection_cpp/service_introspection.hpp>
 #include <rosidl_typesupport_introspection_cpp/message_introspection.hpp>
+#include <rosidl_runtime_c/message_initialization.h>
 #include <rosidl_runtime_cpp/message_initialization.hpp>
 #include <roseus/version.h>
 
@@ -111,12 +114,12 @@ using namespace std;
 struct ActionClientData {
   rcl_action_client_t client;
   const rosidl_action_type_support_t* action_ts;
-  // Introspection for C struct allocation/init/fini
-  const rosidl_typesupport_introspection_cpp::ServiceMembers* goal_svc_intro;
-  const rosidl_typesupport_introspection_cpp::ServiceMembers* result_svc_intro;
-  const rosidl_typesupport_introspection_cpp::ServiceMembers* cancel_svc_intro;
-  const rosidl_typesupport_introspection_cpp::MessageMembers* feedback_msg_intro;
-  const rosidl_typesupport_introspection_cpp::MessageMembers* status_msg_intro;
+  // rcl_action uses the C action type support, so allocate/init/fini C structs.
+  const rosidl_typesupport_introspection_c__ServiceMembers* goal_svc_intro;
+  const rosidl_typesupport_introspection_c__ServiceMembers* result_svc_intro;
+  const rosidl_typesupport_introspection_c__ServiceMembers* cancel_svc_intro;
+  const rosidl_typesupport_introspection_c__MessageMembers* feedback_msg_intro;
+  const rosidl_typesupport_introspection_c__MessageMembers* status_msg_intro;
   // Keep shared libraries alive
   vector<shared_ptr<rcpputils::SharedLibrary>> libs;
 };
@@ -125,11 +128,11 @@ struct ActionClientData {
 struct ActionServerData {
   rcl_action_server_t server;
   const rosidl_action_type_support_t* action_ts;
-  const rosidl_typesupport_introspection_cpp::ServiceMembers* goal_svc_intro;
-  const rosidl_typesupport_introspection_cpp::ServiceMembers* result_svc_intro;
-  const rosidl_typesupport_introspection_cpp::ServiceMembers* cancel_svc_intro;
-  const rosidl_typesupport_introspection_cpp::MessageMembers* feedback_msg_intro;
-  const rosidl_typesupport_introspection_cpp::MessageMembers* status_msg_intro;
+  const rosidl_typesupport_introspection_c__ServiceMembers* goal_svc_intro;
+  const rosidl_typesupport_introspection_c__ServiceMembers* result_svc_intro;
+  const rosidl_typesupport_introspection_c__ServiceMembers* cancel_svc_intro;
+  const rosidl_typesupport_introspection_c__MessageMembers* feedback_msg_intro;
+  const rosidl_typesupport_introspection_c__MessageMembers* status_msg_intro;
   vector<shared_ptr<rcpputils::SharedLibrary>> libs;
   // Goal handle management
   vector<rcl_action_goal_handle_t*> goal_handles;
@@ -1755,38 +1758,38 @@ loadActionTypeSupport(const string& action_type,
 }
 
 /* Load service introspection for struct allocation */
-static const rosidl_typesupport_introspection_cpp::ServiceMembers*
+static const rosidl_typesupport_introspection_c__ServiceMembers*
 loadServiceIntrospection(const string& service_type,
                          vector<shared_ptr<rcpputils::SharedLibrary>>& libs) {
   auto lib = rclcpp::get_typesupport_library(
-      service_type, "rosidl_typesupport_introspection_cpp");
+      service_type, "rosidl_typesupport_introspection_c");
   libs.push_back(lib);
   auto ts = rclcpp::get_service_typesupport_handle(
-      service_type, "rosidl_typesupport_introspection_cpp", *lib);
+      service_type, "rosidl_typesupport_introspection_c", *lib);
   return static_cast<
-      const rosidl_typesupport_introspection_cpp::ServiceMembers*>(ts->data);
+      const rosidl_typesupport_introspection_c__ServiceMembers*>(ts->data);
 }
 
 /* Load message introspection for struct allocation */
-static const rosidl_typesupport_introspection_cpp::MessageMembers*
+static const rosidl_typesupport_introspection_c__MessageMembers*
 loadMessageIntrospection(const string& msg_type,
                          vector<shared_ptr<rcpputils::SharedLibrary>>& libs) {
   auto lib = rclcpp::get_typesupport_library(
-      msg_type, "rosidl_typesupport_introspection_cpp");
+      msg_type, "rosidl_typesupport_introspection_c");
   libs.push_back(lib);
   auto ts = rclcpp::get_message_typesupport_handle(
-      msg_type, "rosidl_typesupport_introspection_cpp", *lib);
+      msg_type, "rosidl_typesupport_introspection_c", *lib);
   return static_cast<
-      const rosidl_typesupport_introspection_cpp::MessageMembers*>(ts->data);
+      const rosidl_typesupport_introspection_c__MessageMembers*>(ts->data);
 }
 
 /* Serialize EusLisp message to C struct via CDR */
 static bool eusMsgToCStruct(pointer eus_msg,
                             const rosidl_message_type_support_t* msg_ts,
-                            const rosidl_typesupport_introspection_cpp::MessageMembers* intro,
+                            const rosidl_typesupport_introspection_c__MessageMembers* intro,
                             vector<uint8_t>& buf) {
   buf.resize(intro->size_of_, 0);
-  intro->init_function(buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
+  intro->init_function(buf.data(), ROSIDL_RUNTIME_C_MSG_INIT_ALL);
 
   rclcpp::SerializedMessage cdr = serializeEusMessage(eus_msg);
   rmw_ret_t rc = rmw_deserialize(
@@ -2003,7 +2006,7 @@ pointer ROSEUS_ACTION_TAKE_GOAL_RESPONSE(register context* ctx, int n, pointer* 
 
   auto resp_members = data.goal_svc_intro->response_members_;
   vector<uint8_t> resp_buf(resp_members->size_of_, 0);
-  resp_members->init_function(resp_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
+  resp_members->init_function(resp_buf.data(), ROSIDL_RUNTIME_C_MSG_INIT_ALL);
 
   rmw_request_id_t header;
   memset(&header, 0, sizeof(header));
@@ -2073,7 +2076,7 @@ pointer ROSEUS_ACTION_TAKE_RESULT_RESPONSE(register context* ctx, int n, pointer
 
   auto resp_members = data.result_svc_intro->response_members_;
   vector<uint8_t> resp_buf(resp_members->size_of_, 0);
-  resp_members->init_function(resp_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
+  resp_members->init_function(resp_buf.data(), ROSIDL_RUNTIME_C_MSG_INIT_ALL);
 
   rmw_request_id_t header;
   memset(&header, 0, sizeof(header));
@@ -2107,7 +2110,7 @@ pointer ROSEUS_ACTION_TAKE_FEEDBACK(register context* ctx, int n, pointer* argv)
 
   vector<uint8_t> fb_buf(data.feedback_msg_intro->size_of_, 0);
   data.feedback_msg_intro->init_function(
-      fb_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
+      fb_buf.data(), ROSIDL_RUNTIME_C_MSG_INIT_ALL);
 
   rcl_ret_t rc = rcl_action_take_feedback(&data.client, fb_buf.data());
   if (rc != RCL_RET_OK) {
@@ -2137,7 +2140,7 @@ pointer ROSEUS_ACTION_TAKE_STATUS(register context* ctx, int n, pointer* argv) {
 
   vector<uint8_t> status_buf(data.status_msg_intro->size_of_, 0);
   data.status_msg_intro->init_function(
-      status_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
+      status_buf.data(), ROSIDL_RUNTIME_C_MSG_INIT_ALL);
 
   rcl_ret_t rc = rcl_action_take_status(&data.client, status_buf.data());
   if (rc != RCL_RET_OK) {
@@ -2202,7 +2205,7 @@ pointer ROSEUS_ACTION_TAKE_CANCEL_RESPONSE(register context* ctx, int n, pointer
 
   auto resp_members = data.cancel_svc_intro->response_members_;
   vector<uint8_t> resp_buf(resp_members->size_of_, 0);
-  resp_members->init_function(resp_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
+  resp_members->init_function(resp_buf.data(), ROSIDL_RUNTIME_C_MSG_INIT_ALL);
 
   rmw_request_id_t header;
   memset(&header, 0, sizeof(header));
@@ -2330,7 +2333,7 @@ pointer ROSEUS_ACTION_TAKE_GOAL_REQUEST(register context* ctx, int n, pointer* a
 
   auto req_members = data.goal_svc_intro->request_members_;
   vector<uint8_t> req_buf(req_members->size_of_, 0);
-  req_members->init_function(req_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
+  req_members->init_function(req_buf.data(), ROSIDL_RUNTIME_C_MSG_INIT_ALL);
 
   rcl_ret_t rc = rcl_action_take_goal_request(
       &data.server, &data.last_goal_request_header, req_buf.data());
@@ -2500,7 +2503,7 @@ pointer ROSEUS_ACTION_TAKE_RESULT_REQUEST(register context* ctx, int n, pointer*
 
   auto req_members = data.result_svc_intro->request_members_;
   vector<uint8_t> req_buf(req_members->size_of_, 0);
-  req_members->init_function(req_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
+  req_members->init_function(req_buf.data(), ROSIDL_RUNTIME_C_MSG_INIT_ALL);
 
   rcl_ret_t rc = rcl_action_take_result_request(
       &data.server, &data.last_result_request_header, req_buf.data());
@@ -2567,7 +2570,7 @@ pointer ROSEUS_ACTION_TAKE_CANCEL_REQUEST(register context* ctx, int n, pointer*
 
   auto req_members = data.cancel_svc_intro->request_members_;
   vector<uint8_t> req_buf(req_members->size_of_, 0);
-  req_members->init_function(req_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
+  req_members->init_function(req_buf.data(), ROSIDL_RUNTIME_C_MSG_INIT_ALL);
 
   rcl_ret_t rc = rcl_action_take_cancel_request(
       &data.server, &data.last_cancel_request_header, req_buf.data());

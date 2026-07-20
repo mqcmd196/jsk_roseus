@@ -941,15 +941,20 @@ def _write_serialize_cdr_field(s, f):
             s.write(f'(write-long (length {slot}) s)')
         if f.is_builtin:
             align = _cdr_alignment(f)
-            _write_cdr_align_serialize(s, align)
             if f.array_len:
+                _write_cdr_align_serialize(s, align)
                 s.write(f'(dotimes (i {f.array_len})')
             else:
-                s.write(f'(dotimes (i (length {var}))')
+                s.write(f'(when (> (length {var}) 0)')
+                with Indent(s):
+                    _write_cdr_align_serialize(s, align)
+                    s.write(f'(dotimes (i (length {var}))')
             var = f'(elt {var} i)'
             with Indent(s):
                 _write_serialize_cdr_builtin(s, f, var)
             s.write('  )')
+            if not f.array_len:
+                s.write('  )')
         else:
             s.write(f'(dolist (elem {slot})')
             with Indent(s):
@@ -1096,13 +1101,16 @@ def _write_deserialize_cdr_field(s, f):
                         s.write(
                             f'(setq {var}'
                             f' (instantiate {lt}-vector n))')
-                    _write_cdr_align_deserialize(
-                        s, _cdr_alignment(f))
-                    s.write('(dotimes (i n)')
+                    s.write('(when (> n 0)')
                     with Indent(s):
-                        _write_deserialize_cdr_builtin(
-                            s, f, f'(elt {var} i)')
-                    s.write('))')
+                        _write_cdr_align_deserialize(
+                            s, _cdr_alignment(f))
+                        s.write('(dotimes (i n)')
+                        with Indent(s):
+                            _write_deserialize_cdr_builtin(
+                                s, f, f'(elt {var} i)')
+                        s.write('  )')
+                    s.write('  )')
         else:
             # array of non-builtin (messages)
             if f.array_len:
