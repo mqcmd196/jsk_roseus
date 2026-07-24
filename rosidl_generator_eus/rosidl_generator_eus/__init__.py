@@ -55,7 +55,61 @@ from rosidl_parser.definition import (
 from rosidl_parser.parser import parse_idl_file
 from rosidl_parser.definition import IdlLocator
 
-from geneus.generate import IndentedWriter, Indent
+
+# Copied from geneus.generate:
+# https://github.com/jsk-ros-pkg/geneus/blob/master/src/geneus/generate.py
+class IndentedWriter:
+    """Write indented Lisp forms.
+
+    This used to be imported from the ROS 1-only ``geneus`` package.  Keeping
+    the tiny formatting helper here makes the ROS 2 generator self-contained.
+    """
+
+    def __init__(self, stream):
+        self.str = stream
+        self.indentation = 0
+        self.block_indent = False
+
+    def write(self, value, indent=True, newline=True):
+        if not indent:
+            newline = False
+        if self.block_indent:
+            self.block_indent = False
+        else:
+            if newline:
+                self.str.write('\n')
+            if indent:
+                self.str.write(' ' * self.indentation)
+        self.str.write(value)
+
+    def newline(self):
+        self.str.write('\n')
+
+    def inc_indent(self, amount=2):
+        self.indentation += amount
+
+    def dec_indent(self, amount=2):
+        self.indentation -= amount
+
+    def block_next_indent(self):
+        self.block_indent = True
+
+
+class Indent:
+    """Context manager for :class:`IndentedWriter` indentation."""
+
+    def __init__(self, writer, inc=2, indent_first=True):
+        self.writer = writer
+        self.inc = inc
+        self.indent_first = indent_first
+
+    def __enter__(self):
+        self.writer.inc_indent(self.inc)
+        if not self.indent_first:
+            self.writer.block_next_indent()
+
+    def __exit__(self, _type, _value, _traceback):
+        self.writer.dec_indent(self.inc)
 
 
 # ============================================================
