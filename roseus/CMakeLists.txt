@@ -42,10 +42,6 @@ rosidl_generate_interfaces(${PROJECT_NAME}_interfaces
   action/Fibonacci.action
   DEPENDENCIES std_msgs builtin_interfaces action_msgs unique_identifier_msgs
 )
-if(UNIX AND NOT APPLE)
-  # roseus is loaded by the EusLisp runtime, which resolves these symbols.
-  string(APPEND CMAKE_SHARED_LINKER_FLAGS " -Wl,--unresolved-symbols=ignore-all")
-endif()
 
 # Create typesupport symlinks: runtime looks for roseus__* but libraries are roseus_interfaces__*
 # because rosidl_generate_interfaces target is named roseus_interfaces (to avoid name conflict)
