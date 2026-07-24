@@ -45,20 +45,22 @@
   <exec_depend condition="$ROS_VERSION == 1">message_runtime</exec_depend>
   <exec_depend condition="$ROS_VERSION == 1">dynamic_reconfigure</exec_depend>
 
-  <depend>geneus</depend>
-  <depend>euslisp</depend>
-  <depend>jskeus</depend>
-  <depend>actionlib</depend>
-  <depend>actionlib_msgs</depend>
+  <depend condition="$ROS_VERSION == 1">geneus</depend>
+  <depend condition="$ROS_VERSION == 1">euslisp</depend>
+  <depend condition="$ROS_VERSION == 1">jskeus</depend>
+  <depend condition="$ROS_VERSION == 2">euslisp-dev</depend>
+  <depend condition="$ROS_VERSION == 2">jskeus-dev</depend>
+  <depend condition="$ROS_VERSION == 1">actionlib</depend>
+  <depend condition="$ROS_VERSION == 1">actionlib_msgs</depend>
   <depend>visualization_msgs</depend>
-  <depend>tf</depend>
+  <depend condition="$ROS_VERSION == 1">tf</depend>
   <depend>tf2_ros</depend>
   <depend>geometry_msgs</depend>
   <depend>std_msgs</depend>
   <depend>std_srvs</depend>
   <depend>sensor_msgs</depend>
   <depend>shape_msgs</depend>
-  <depend>actionlib_tutorials</depend>
+  <depend condition="$ROS_VERSION == 1">actionlib_tutorials</depend>
   <depend>coreutils</depend>
   <depend condition="$ROS_VERSION == 2">builtin_interfaces</depend>
   <depend condition="$ROS_VERSION == 2">rclcpp</depend>
