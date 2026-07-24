@@ -6,6 +6,7 @@ on:
 
 env:
   DISPLAY: ':0.0'
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: 'true'
 
 jobs:
   ros:
