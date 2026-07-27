@@ -21,6 +21,10 @@ endif()
 set(euslisp_INCLUDE_DIRS ${EUSDIR}/include)
 
 ament_auto_add_library(roseus SHARED roseus2.cpp)
+set_target_properties(roseus PROPERTIES
+  PREFIX ""
+)
+list(REMOVE_ITEM ${PROJECT_NAME}_LIBRARIES roseus) # not export as library for other packages, because roseus is not a library but a plugin for euslisp
 
 ament_generate_version_header(roseus)
 target_compile_options(roseus
@@ -118,8 +122,11 @@ file(CHMOD ${CMAKE_CURRENT_BINARY_DIR}/bin/roseus PERMISSIONS
 install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/bin/roseus
   DESTINATION bin)
 
-# Create roseus.so symlink in euslisp/ dir (EusLisp load-library expects "roseus.so" in same dir as roseus.l)
-install(CODE "execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink ../../../lib/libroseus.so roseus.so WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/roseus/euslisp)")
+# Install roseus.so in euslisp/ dir (EusLisp load-library expects "roseus.so" in same dir as roseus.l)
+install(
+  TARGETS roseus
+  LIBRARY DESTINATION "share/${PROJECT_NAME}/euslisp"
+)
 
 ament_auto_package(
   CONFIG_EXTRAS cmake/roseus-extras.cmake.in
