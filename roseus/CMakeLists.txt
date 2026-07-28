@@ -101,6 +101,7 @@ if(BUILD_TESTING)
   add_launch_test(test/multi-queue.test.py TIMEOUT 60)
   add_launch_test(test/fibonacci-action.test.py TIMEOUT 120)
   add_launch_test(test/fibonacci-action-ros2-api.test.py TIMEOUT 120)
+  add_launch_test(test/follow-joint-trajectory.test.py TIMEOUT 120)
 
   set_tests_properties(
     test_mark_lock
