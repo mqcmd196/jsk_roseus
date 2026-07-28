@@ -23,3 +23,5 @@
       (ros::ros-info "~d + ~d = ~d (~A sec)" (send req :a) (send req :b) (send res :sum) (send (ros::time- after before) :to-sec))
     (ros::ros-warn "service call failed for ~d + ~d" (send req :a) (send req :b)))
   (unix::usleep (* 200 1000)))  ;; 200ms instead of 1000ms
+
+(exit)

@@ -11,12 +11,17 @@
 ;;;
 (init-unit-test)
 
+;; Number of calls add-two-ints-client-ros2.l makes.
+(defvar *expected-calls* 20)
+(defvar *num-served* 0)
+
 (defun add-two-ints (req)
   (let ((m (send req :response)))
     (warning-message 2 "Returning [~d + ~d = ~d]~%"
                      (send req :a) (send req :b)
                      (+ (send req :a) (send req :b)))
     (send m :sum  (+ (send req :a) (send req :b)))
+    (incf *num-served*)
     m))
 
 (deftest test-add-two-ints-server
@@ -24,11 +29,16 @@
   (ros::advertise-service "add_two_ints" roseus::AddTwoInts #'add-two-ints
                           :groupname "add_two_ints_server_groupname")
 
-  ;; Spin long enough for DDS discovery + client calls (ROS 2 discovery is slower than ROS 1)
-  (ros::rate 10)
-  (dotimes (i 150)
-    (ros::spin-once "add_two_ints_server_groupname")
-    (ros::sleep))
+  (ros::rate 100)
+  (let ((max-iter 1500) (i 0))
+    (while (and (< i max-iter) (< *num-served* *expected-calls*))
+      (ros::spin-once "add_two_ints_server_groupname")
+      (ros::sleep)
+      (incf i)))
+  (warning-message 2 "served ~A/~A requests~%" *num-served* *expected-calls*)
+  (assert (>= *num-served* *expected-calls*)
+          (format nil "served only ~A of ~A requests"
+                  *num-served* *expected-calls*))
   )
 
 (ros::roseus "add_two_ints_server_init")

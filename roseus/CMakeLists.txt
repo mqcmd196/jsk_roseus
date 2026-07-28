@@ -93,19 +93,21 @@ if(BUILD_TESTING)
   add_test(NAME test_msg_serialize
     COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-msg-serialize-ros2.l)
 
-  add_launch_test(test/talker-listener.test.py TIMEOUT 60)
+  # Smoke tests finish in well under 10 s; 20 s leaves room for DDS discovery.
+  add_launch_test(test/talker-listener.test.py TIMEOUT 20)
+  add_launch_test(test/add-two-ints-server.test.py TIMEOUT 20)
+  add_launch_test(test/add-two-ints-server-groupname.test.py TIMEOUT 20)
+  add_launch_test(test/service-callback.test.py TIMEOUT 20)
+  add_launch_test(test/multi-queue.test.py TIMEOUT 20)
+  add_launch_test(test/fibonacci-action.test.py TIMEOUT 20)
+  add_launch_test(test/fibonacci-action-ros2-api.test.py TIMEOUT 30)
+  # Stress tests: the high iteration counts are the point
   add_launch_test(test/add-two-ints.test.py TIMEOUT 120)
-  add_launch_test(test/add-two-ints-server.test.py TIMEOUT 120)
-  add_launch_test(test/add-two-ints-server-groupname.test.py TIMEOUT 120)
-  add_launch_test(test/service-callback.test.py TIMEOUT 120)
-  add_launch_test(test/multi-queue.test.py TIMEOUT 60)
-  add_launch_test(test/fibonacci-action.test.py TIMEOUT 120)
-  add_launch_test(test/fibonacci-action-ros2-api.test.py TIMEOUT 120)
-  add_launch_test(test/follow-joint-trajectory.test.py TIMEOUT 120)
+  add_launch_test(test/follow-joint-trajectory.test.py TIMEOUT 60)
 
   set_tests_properties(
     test_mark_lock
-    PROPERTIES TIMEOUT 60)
+    PROPERTIES TIMEOUT 20)
 endif()
 
 include(cmake/roseus_generate_dep_msgs.cmake)
