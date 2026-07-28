@@ -227,7 +227,6 @@
           is-active-flag
           ;; Result storage (server stores result, sends when client requests)
           pending-result pending-result-status result-ready
-          result-request-received
           groupname))
 
 (defmethod ros::simple-action-server
@@ -260,7 +259,6 @@
    (setq pending-result nil)
    (setq pending-result-status nil)
    (setq result-ready nil)
-   (setq result-request-received nil)
    ;; Initialize rcl_action server
    (ros::action-server-init name-space action-type-str)
    self)
@@ -277,16 +275,9 @@
    ;; Poll for new goal requests
    (let ((req (instance (get send-goal-service :request) :init)))
      (when (ros::action-take-goal-request name-space req)
-       ;; Accept the goal
-       (let ((resp (instance (get send-goal-service :response) :init))
-             (uuid-bytes (send (send req :goal_id) :uuid)))
-         (send resp :accepted t)
-         ;; Set stamp
-         (send resp :stamp (instance builtin_interfaces::Time :init
-                                     :sec (send (ros::time-now) :sec)
-                                     :nanosec (send (ros::time-now) :nsec)))
-         (ros::action-send-goal-response name-space resp)
-         ;; Register goal handle
+       ;; ServerBase already accepted the goal and answered the client;
+       ;; just pick up the handle it registered for us.
+       (let ((uuid-bytes (send (send req :goal_id) :uuid)))
          (setq current-goal-handle
                (ros::action-accept-new-goal name-space uuid-bytes))
          (setq current-goal req) ;; store SendGoal_Request (like ROS 1 ActionGoal)
@@ -294,7 +285,14 @@
          (setq preempt-requested nil)
          (setq is-active-flag t)
          (setq result-ready nil)
-         (setq result-request-received nil)
+         ;; NOTE: there is deliberately no result-request bookkeeping here.
+         ;; The client sends its result request immediately after the goal
+         ;; request and the two travel over separate services, so the result
+         ;; request can reach the server first. rclcpp_action::ServerBase
+         ;; handles that for us: it keys pending result requests on the goal
+         ;; UUID, so :send-pending-result can just publish the result whenever
+         ;; it is ready and ServerBase delivers it to whoever asked, whenever
+         ;; they asked.
          ;; Publish status
          (ros::action-publish-status name-space)
          ;; Call execute callback (server goal) like ROS 1
@@ -304,21 +302,10 @@
    ;; Poll for cancel requests
    (let ((req (instance action_msgs::CancelGoalRequest :init)))
      (when (ros::action-take-cancel-request name-space req)
+       ;; ServerBase already answered the cancel request.
        (setq preempt-requested t)
-       ;; Send cancel response (accept the cancellation)
-       (let ((resp (instance action_msgs::CancelGoalResponse :init)))
-         ;; Return code 0 = ERROR_NONE
-         (send resp :return_code 0)
-         (ros::action-send-cancel-response name-space resp))
        (when preempt-cb
-         (funcall preempt-cb))))
-   ;; Poll for result requests
-   (let ((req (instance (get get-result-service :request) :init)))
-     (when (ros::action-take-result-request name-space req)
-       (setq result-request-received t)
-       ;; If result is already available, send it now
-       (when result-ready
-         (send self :send-pending-result)))))
+         (funcall preempt-cb)))))
   ;;
   (:goal () "Get the current goal." current-goal)
   (:goal-handle () "Get the current goal handle." current-goal-handle)
@@ -333,15 +320,20 @@
   ;;
   (:send-pending-result
    ()
-   "Internal: send the stored result response to the client."
-   (when (and result-ready result-request-received)
+   "Internal: publish the result for the current goal.
+    rclcpp_action::ServerBase matches the published result against the client's
+    result request by goal UUID, answering a request that already arrived and
+    storing the result for one that has not. So this no longer has to wait for
+    the request to be observed first -- which used to be racy, because the goal
+    and result services are separate DDS endpoints with no ordering guarantee
+    between them."
+   (when result-ready
      (let ((resp (instance (get get-result-service :response) :init)))
        (send resp :status pending-result-status)
        (when pending-result (send resp :result pending-result))
-       (ros::action-send-result-response name-space resp))
+       (ros::action-send-result-response name-space current-uuid resp))
      (ros::action-notify-goal-done name-space)
-     (setq result-ready nil)
-     (setq result-request-received nil)))
+     (setq result-ready nil)))
   ;;
   (:set-succeeded
    (result &optional (text ""))
@@ -357,9 +349,7 @@
      (setq pending-result-status ros::*action-goal-state-succeeded*)
      (setq result-ready t)
      (setq is-active-flag nil)
-     ;; If client already requested result, send it now
-     (when result-request-received
-       (send self :send-pending-result))))
+     (send self :send-pending-result)))
   ;;
   (:set-aborted
    (result &optional (text ""))
@@ -372,8 +362,7 @@
      (setq pending-result-status ros::*action-goal-state-aborted*)
      (setq result-ready t)
      (setq is-active-flag nil)
-     (when result-request-received
-       (send self :send-pending-result))))
+     (send self :send-pending-result)))
   ;;
   (:set-preempted
    (&optional result (text ""))
@@ -389,8 +378,7 @@
      (setq pending-result-status ros::*action-goal-state-canceled*)
      (setq result-ready t)
      (setq is-active-flag nil)
-     (when result-request-received
-       (send self :send-pending-result))))
+     (send self :send-pending-result)))
   ;;
   (:publish-feedback
    (feedback)

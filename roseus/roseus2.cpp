@@ -64,6 +64,8 @@
 #include <rclcpp/serialization.hpp>
 #include <rcl/service.h>
 #include <rcl_action/rcl_action.h>
+#include <rclcpp_action/rclcpp_action.hpp>
+#include <action_msgs/msg/goal_status.hpp>
 #include <rmw/rmw.h>
 #include <rcutils/logging.h>
 #include <ament_index_cpp/get_package_share_directory.hpp>
@@ -121,22 +123,23 @@ struct ActionClientData {
   vector<shared_ptr<rcpputils::SharedLibrary>> libs;
 };
 
+// Action servers are built on rclcpp_action::ServerBase (see the definition of
+// RoseusActionServer further down). ServerBase is deliberately NOT a template --
+// it takes a runtime rosidl_action_type_support_t* -- so it can be driven with
+// the dynamically loaded type supports roseus works with, while still reusing
+// upstream's goal/result bookkeeping instead of hand-rolling it against the
+// rcl_action C API.
+class RoseusActionServer;
+
 // Per-action-server data
 struct ActionServerData {
-  rcl_action_server_t server;
+  shared_ptr<RoseusActionServer> server;
   const rosidl_action_type_support_t* action_ts;
   const rosidl_typesupport_introspection_cpp::ServiceMembers* goal_svc_intro;
   const rosidl_typesupport_introspection_cpp::ServiceMembers* result_svc_intro;
   const rosidl_typesupport_introspection_cpp::ServiceMembers* cancel_svc_intro;
   const rosidl_typesupport_introspection_cpp::MessageMembers* feedback_msg_intro;
-  const rosidl_typesupport_introspection_cpp::MessageMembers* status_msg_intro;
   vector<shared_ptr<rcpputils::SharedLibrary>> libs;
-  // Goal handle management
-  vector<rcl_action_goal_handle_t*> goal_handles;
-  // Request headers for pending service requests
-  rmw_request_id_t last_goal_request_header;
-  rmw_request_id_t last_result_request_header;
-  rmw_request_id_t last_cancel_request_header;
 };
 
 struct RoseusStaticData {
@@ -2226,6 +2229,194 @@ pointer ROSEUS_ACTION_TAKE_CANCEL_RESPONSE(register context* ctx, int n, pointer
  *   Action Server
  ************************************************************/
 
+/*
+ * Convert an EusLisp message into a heap-allocated C struct owned by the
+ * returned shared_ptr (deleter runs fini_function + free).
+ *
+ * ServerBase::publish_result() keeps the shared_ptr it is given -- a result may
+ * have to be replayed to a result request that has not arrived yet -- so the
+ * message must outlive the calling primitive. Handing it a pointer into a local
+ * buffer leaves a dangling pointer that later gets serialized as garbage.
+ */
+static shared_ptr<void> eusMsgToOwnedCStruct(
+    pointer eus_msg,
+    const rosidl_message_type_support_t* msg_ts,
+    const rosidl_typesupport_introspection_cpp::MessageMembers* intro) {
+  void* buf = malloc(intro->size_of_);
+  if (!buf) return nullptr;
+  memset(buf, 0, intro->size_of_);
+  intro->init_function(buf, rosidl_runtime_cpp::MessageInitialization::ALL);
+
+  rclcpp::SerializedMessage cdr = serializeEusMessage(eus_msg);
+  rmw_ret_t rc = rmw_deserialize(&cdr.get_rcl_serialized_message(), msg_ts, buf);
+  if (rc != RMW_RET_OK) {
+    intro->fini_function(buf);
+    free(buf);
+    return nullptr;
+  }
+  return shared_ptr<void>(buf, [intro](void* p) { intro->fini_function(p); free(p); });
+}
+
+/* Find a top-level member's byte offset by name via introspection */
+static bool findMemberOffset(
+    const rosidl_typesupport_introspection_cpp::MessageMembers* members,
+    const char* name, uint32_t& offset) {
+  if (!members) return false;
+  for (uint32_t i = 0; i < members->member_count_; ++i) {
+    if (strcmp(members->members_[i].name_, name) == 0) {
+      offset = members->members_[i].offset_;
+      return true;
+    }
+  }
+  return false;
+}
+
+/*
+ * Action server built on rclcpp_action::ServerBase.
+ *
+ * ServerBase is intentionally not a template: its constructor takes a runtime
+ * `const rosidl_action_type_support_t *`, and every type-dependent operation is
+ * funnelled through the pure-virtual hooks below, which only ever deal in
+ * void* / shared_ptr<void> / GoalUUID. That makes it usable with the type
+ * supports roseus loads dynamically at runtime, which the templated
+ * rclcpp_action::Server<ActionT> could never be.
+ *
+ * Using it means the goal/result bookkeeping that used to be hand-rolled here
+ * against the rcl_action C API now comes from upstream. In particular
+ * ServerBase::publish_result() keys pending result requests on the goal UUID,
+ * so a result request that arrives before its goal request (the goal and
+ * result services are separate DDS endpoints with no mutual ordering
+ * guarantee) is matched up correctly instead of being dropped, and
+ * publish_status() performs the C-struct -> C++-message conversion that
+ * rcl_action_publish_status() requires.
+ *
+ * The EusLisp layer stays polling-based: these hooks only enqueue work, and
+ * ros::spin-once (which drives the executor this waitable is registered with)
+ * runs them on the EusLisp thread, so no EusLisp state is touched concurrently.
+ */
+class RoseusActionServer : public rclcpp_action::ServerBase {
+ public:
+  struct AcceptedGoal {
+    rclcpp_action::GoalUUID uuid;
+    shared_ptr<void> request;
+    shared_ptr<rcl_action_goal_handle_t> handle;
+  };
+
+  RoseusActionServer(
+      shared_ptr<rclcpp::Node> node,
+      const string& name,
+      const rosidl_action_type_support_t* action_ts,
+      const rcl_action_server_options_t& options,
+      const rosidl_typesupport_introspection_cpp::ServiceMembers* goal_svc_intro,
+      const rosidl_typesupport_introspection_cpp::ServiceMembers* result_svc_intro)
+      : rclcpp_action::ServerBase(
+            node->get_node_base_interface(),
+            node->get_node_clock_interface(),
+            node->get_node_logging_interface(),
+            name, action_ts, options),
+        goal_svc_intro_(goal_svc_intro),
+        result_svc_intro_(result_svc_intro) {}
+
+  // Drained by the EusLisp :worker loop
+  vector<AcceptedGoal> pending_goals;
+  vector<rclcpp_action::GoalUUID> pending_cancels;
+  // Goal handles, addressed by index from EusLisp
+  vector<shared_ptr<rcl_action_goal_handle_t>> goal_handles;
+  vector<rclcpp_action::GoalUUID> goal_uuids;
+
+  // Re-expose the protected ServerBase operations to the EusLisp primitives
+  using rclcpp_action::ServerBase::notify_goal_terminal_state;
+  using rclcpp_action::ServerBase::publish_feedback;
+  using rclcpp_action::ServerBase::publish_result;
+  using rclcpp_action::ServerBase::publish_status;
+
+  int indexOfUuid(const rclcpp_action::GoalUUID& uuid) {
+    for (size_t i = 0; i < goal_uuids.size(); ++i) {
+      if (goal_uuids[i] == uuid) return (int)i;
+    }
+    return -1;
+  }
+
+ protected:
+  static shared_ptr<void> allocMsg(
+      const rosidl_typesupport_introspection_cpp::MessageMembers* m) {
+    void* buf = malloc(m->size_of_);
+    memset(buf, 0, m->size_of_);
+    m->init_function(buf, rosidl_runtime_cpp::MessageInitialization::ALL);
+    return shared_ptr<void>(buf, [m](void* p) { m->fini_function(p); free(p); });
+  }
+
+  static rclcpp_action::GoalUUID uuidFrom(
+      void* message,
+      const rosidl_typesupport_introspection_cpp::MessageMembers* m) {
+    rclcpp_action::GoalUUID uuid;
+    uuid.fill(0);
+    uint32_t off;
+    // <Action>_SendGoal_Request / _GetResult_Request both start with a
+    // unique_identifier_msgs/UUID `goal_id`, whose sole member is uint8[16].
+    if (findMemberOffset(m, "goal_id", off)) {
+      memcpy(uuid.data(), static_cast<uint8_t*>(message) + off, 16);
+    }
+    return uuid;
+  }
+
+  shared_ptr<void> create_goal_request() override {
+    return allocMsg(goal_svc_intro_->request_members_);
+  }
+
+  shared_ptr<void> create_result_request() override {
+    return allocMsg(result_svc_intro_->request_members_);
+  }
+
+  shared_ptr<void> create_result_response(
+      decltype(action_msgs::msg::GoalStatus::status) status) override {
+    auto m = result_svc_intro_->response_members_;
+    auto msg = allocMsg(m);
+    uint32_t off;
+    if (findMemberOffset(m, "status", off)) {
+      *(static_cast<uint8_t*>(msg.get()) + off) = static_cast<uint8_t>(status);
+    }
+    return msg;
+  }
+
+  rclcpp_action::GoalUUID get_goal_id_from_goal_request(void* message) override {
+    return uuidFrom(message, goal_svc_intro_->request_members_);
+  }
+
+  rclcpp_action::GoalUUID get_goal_id_from_result_request(void* message) override {
+    return uuidFrom(message, result_svc_intro_->request_members_);
+  }
+
+  std::pair<rclcpp_action::GoalResponse, shared_ptr<void>>
+  call_handle_goal_callback(rclcpp_action::GoalUUID&,
+                            shared_ptr<void> request) override {
+    // roseus simple-action-server always accepts; the EusLisp execute-cb runs
+    // the goal once :worker picks it up out of pending_goals.
+    return std::make_pair(rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE, request);
+  }
+
+  rclcpp_action::CancelResponse
+  call_handle_cancel_callback(const rclcpp_action::GoalUUID& uuid) override {
+    pending_cancels.push_back(uuid);
+    return rclcpp_action::CancelResponse::ACCEPT;
+  }
+
+  void call_goal_accepted_callback(
+      shared_ptr<rcl_action_goal_handle_t> rcl_goal_handle,
+      rclcpp_action::GoalUUID uuid,
+      shared_ptr<void> goal_request_message) override {
+    AcceptedGoal g;
+    g.uuid = uuid;
+    g.request = goal_request_message;
+    g.handle = rcl_goal_handle;
+    pending_goals.push_back(g);
+  }
+
+ private:
+  const rosidl_typesupport_introspection_cpp::ServiceMembers* goal_svc_intro_;
+  const rosidl_typesupport_introspection_cpp::ServiceMembers* result_svc_intro_;
+};
+
 pointer ROSEUS_ACTION_SERVER_INIT(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
   ckarg(2);
@@ -2247,10 +2438,6 @@ pointer ROSEUS_ACTION_SERVER_INIT(register context* ctx, int n, pointer* argv) {
   }
 
   auto data = make_shared<ActionServerData>();
-  data->server = rcl_action_get_zero_initialized_server();
-  memset(&data->last_goal_request_header, 0, sizeof(rmw_request_id_t));
-  memset(&data->last_result_request_header, 0, sizeof(rmw_request_id_t));
-  memset(&data->last_cancel_request_header, 0, sizeof(rmw_request_id_t));
 
   data->action_ts = loadActionTypeSupport(action_type, data->libs);
   if (!data->action_ts) {
@@ -2262,35 +2449,31 @@ pointer ROSEUS_ACTION_SERVER_INIT(register context* ctx, int n, pointer* argv) {
   string result_svc_type = pkg + "/action/" + name_str + "_GetResult";
   string cancel_svc_type = "action_msgs/srv/CancelGoal";
   string feedback_msg_type = pkg + "/action/" + name_str + "_FeedbackMessage";
-  string status_msg_type = "action_msgs/msg/GoalStatusArray";
 
   try {
     data->goal_svc_intro = loadServiceIntrospection(goal_svc_type, data->libs);
     data->result_svc_intro = loadServiceIntrospection(result_svc_type, data->libs);
     data->cancel_svc_intro = loadServiceIntrospection(cancel_svc_type, data->libs);
     data->feedback_msg_intro = loadMessageIntrospection(feedback_msg_type, data->libs);
-    data->status_msg_intro = loadMessageIntrospection(status_msg_type, data->libs);
   } catch (const std::exception& e) {
     RCLCPP_ERROR(s_node->get_logger(), "failed to load introspection for %s: %s",
                  action_type.c_str(), e.what());
     return (NIL);
   }
 
-  // Get a clock for the action server
-  rcl_clock_t* clock = s_node->get_clock()->get_clock_handle();
-
   rcl_action_server_options_t options = rcl_action_server_get_default_options();
-  rcl_ret_t rc = rcl_action_server_init(
-      &data->server,
-      s_node->get_node_base_interface()->get_rcl_node_handle(),
-      clock, data->action_ts, action_name.c_str(), &options);
-
-  if (rc != RCL_RET_OK) {
+  try {
+    data->server = make_shared<RoseusActionServer>(
+        s_node, action_name, data->action_ts, options,
+        data->goal_svc_intro, data->result_svc_intro);
+  } catch (const std::exception& e) {
     RCLCPP_ERROR(s_node->get_logger(), "failed to init action server %s: %s",
-                 action_name.c_str(), rcl_get_error_string().str);
-    rcl_reset_error();
+                 action_name.c_str(), e.what());
     return (NIL);
   }
+
+  // Register as a waitable so the executor driven by ros::spin-once services it
+  s_node->get_node_waitables_interface()->add_waitable(data->server, nullptr);
 
   s_mapActionServers[action_name] = data;
   return (T);
@@ -2306,12 +2489,9 @@ pointer ROSEUS_ACTION_SERVER_DESTROY(register context* ctx, int n, pointer* argv
   auto it = s_mapActionServers.find(action_name);
   if (it == s_mapActionServers.end()) return (NIL);
 
-  // Goal handles are managed by rcl_action_server internally;
-  // rcl_action_server_fini will clean them up.
-
-  rcl_action_server_fini(
-      &it->second->server,
-      s_node->get_node_base_interface()->get_rcl_node_handle());
+  if (it->second->server) {
+    s_node->get_node_waitables_interface()->remove_waitable(it->second->server, nullptr);
+  }
   s_mapActionServers.erase(it);
   return (T);
 }
@@ -2326,62 +2506,23 @@ pointer ROSEUS_ACTION_TAKE_GOAL_REQUEST(register context* ctx, int n, pointer* a
 
   auto it = s_mapActionServers.find(action_name);
   if (it == s_mapActionServers.end()) return (NIL);
-  auto& data = *it->second;
+  auto& srv = *it->second->server;
 
-  auto req_members = data.goal_svc_intro->request_members_;
-  vector<uint8_t> req_buf(req_members->size_of_, 0);
-  req_members->init_function(req_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
+  // ServerBase has already taken/accepted the goal from the wire; hand the
+  // oldest not-yet-executed one to EusLisp.
+  if (srv.pending_goals.empty()) return (NIL);
+  auto g = srv.pending_goals.front();
+  srv.pending_goals.erase(srv.pending_goals.begin());
 
-  rcl_ret_t rc = rcl_action_take_goal_request(
-      &data.server, &data.last_goal_request_header, req_buf.data());
-
-  if (rc != RCL_RET_OK) {
-    req_members->fini_function(req_buf.data());
-    return (NIL);
-  }
+  srv.goal_handles.push_back(g.handle);
+  srv.goal_uuids.push_back(g.uuid);
 
   vpush(eus_request);
-  bool ok = cStructToEusMsg(req_buf.data(),
-                            data.action_ts->goal_service_type_support->request_typesupport,
+  bool ok = cStructToEusMsg(g.request.get(),
+                            it->second->action_ts->goal_service_type_support->request_typesupport,
                             eus_request);
   vpop();
-  req_members->fini_function(req_buf.data());
   return ok ? T : NIL;
-}
-
-pointer ROSEUS_ACTION_SEND_GOAL_RESPONSE(register context* ctx, int n, pointer* argv) {
-  isInstalledCheck;
-  ckarg(2);
-  string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
-  else error(E_NOSTRING);
-  pointer eus_response = argv[1];
-
-  auto it = s_mapActionServers.find(action_name);
-  if (it == s_mapActionServers.end()) return (NIL);
-  auto& data = *it->second;
-
-  auto resp_members = data.goal_svc_intro->response_members_;
-  vector<uint8_t> resp_buf;
-  vpush(eus_response);
-  if (!eusMsgToCStruct(eus_response,
-                       data.action_ts->goal_service_type_support->response_typesupport,
-                       resp_members, resp_buf)) {
-    vpop();
-    return (NIL);
-  }
-  vpop();
-
-  rcl_ret_t rc = rcl_action_send_goal_response(
-      &data.server, &data.last_goal_request_header, resp_buf.data());
-  resp_members->fini_function(resp_buf.data());
-
-  if (rc != RCL_RET_OK) {
-    RCLCPP_ERROR(s_node->get_logger(), "failed to send goal response for %s", action_name.c_str());
-    rcl_reset_error();
-    return (NIL);
-  }
-  return (T);
 }
 
 pointer ROSEUS_ACTION_ACCEPT_NEW_GOAL(register context* ctx, int n, pointer* argv) {
@@ -2394,39 +2535,25 @@ pointer ROSEUS_ACTION_ACCEPT_NEW_GOAL(register context* ctx, int n, pointer* arg
 
   auto it = s_mapActionServers.find(action_name);
   if (it == s_mapActionServers.end()) return (NIL);
-  auto& data = *it->second;
+  auto& srv = *it->second->server;
 
-  rcl_action_goal_info_t goal_info;
-  memset(&goal_info, 0, sizeof(goal_info));
+  rclcpp_action::GoalUUID uuid;
+  uuid.fill(0);
   if (isstring(eus_uuid) && strlength(eus_uuid) >= 16) {
-    memcpy(goal_info.goal_id.uuid, get_string(eus_uuid), 16);
+    memcpy(uuid.data(), get_string(eus_uuid), 16);
   }
-  // Set stamp
-  rclcpp::Time now = s_node->now();
-  goal_info.stamp.sec = static_cast<int32_t>(now.seconds());
-  goal_info.stamp.nanosec = static_cast<uint32_t>(now.nanoseconds() % 1000000000LL);
 
-  rcl_action_goal_handle_t* gh = rcl_action_accept_new_goal(
-      &data.server, &goal_info);
-  if (!gh) {
-    RCLCPP_ERROR(s_node->get_logger(), "failed to accept new goal for %s", action_name.c_str());
+  int idx = srv.indexOfUuid(uuid);
+  if (idx < 0) {
+    RCLCPP_ERROR(s_node->get_logger(), "unknown goal for %s", action_name.c_str());
     return (NIL);
   }
 
-  // Track the goal handle
-  data.goal_handles.push_back(gh);
-
-  // Transition to executing state
-  rcl_action_update_goal_state(gh, GOAL_EVENT_EXECUTE);
-
-  // Publish status update
-  rcl_action_goal_status_array_t status_msg =
-      rcl_action_get_zero_initialized_goal_status_array();
-  rcl_action_get_goal_status_array(&data.server, &status_msg);
-  rcl_action_publish_status(&data.server, &status_msg.msg);
-  rcl_action_goal_status_array_fini(&status_msg);
-
-  return makeint(data.goal_handles.size() - 1);  // return handle index
+  // ServerBase already accepted the goal AND transitioned it to EXECUTING
+  // (we answer ACCEPT_AND_EXECUTE), and already published the status. Issuing
+  // GOAL_EVENT_EXECUTE again here would be an invalid EXECUTING->EXECUTING
+  // transition, so this only has to hand back the handle index.
+  return makeint(idx);
 }
 
 pointer ROSEUS_ACTION_PUBLISH_FEEDBACK(register context* ctx, int n, pointer* argv) {
@@ -2441,21 +2568,17 @@ pointer ROSEUS_ACTION_PUBLISH_FEEDBACK(register context* ctx, int n, pointer* ar
   if (it == s_mapActionServers.end()) return (NIL);
   auto& data = *it->second;
 
-  vector<uint8_t> fb_buf;
   vpush(eus_feedback);
-  if (!eusMsgToCStruct(eus_feedback,
-                       data.action_ts->feedback_message_type_support,
-                       data.feedback_msg_intro, fb_buf)) {
-    vpop();
-    return (NIL);
-  }
+  auto fb = eusMsgToOwnedCStruct(eus_feedback,
+                                 data.action_ts->feedback_message_type_support,
+                                 data.feedback_msg_intro);
   vpop();
+  if (!fb) return (NIL);
 
-  rcl_ret_t rc = rcl_action_publish_feedback(&data.server, fb_buf.data());
-  data.feedback_msg_intro->fini_function(fb_buf.data());
-
-  if (rc != RCL_RET_OK) {
-    rcl_reset_error();
+  try {
+    data.server->publish_feedback(fb);
+  } catch (const std::exception& e) {
+    RCLCPP_ERROR(s_node->get_logger(), "publish_feedback failed: %s", e.what());
     return (NIL);
   }
   return (T);
@@ -2470,84 +2593,50 @@ pointer ROSEUS_ACTION_PUBLISH_STATUS(register context* ctx, int n, pointer* argv
 
   auto it = s_mapActionServers.find(action_name);
   if (it == s_mapActionServers.end()) return (NIL);
-  auto& data = *it->second;
 
-  rcl_action_goal_status_array_t status_msg =
-      rcl_action_get_zero_initialized_goal_status_array();
-  rcl_ret_t rc = rcl_action_get_goal_status_array(&data.server, &status_msg);
-  if (rc != RCL_RET_OK) {
-    rcl_reset_error();
+  try {
+    it->second->server->publish_status();
+  } catch (const std::exception& e) {
+    RCLCPP_ERROR(s_node->get_logger(), "publish_status failed: %s", e.what());
     return (NIL);
   }
-
-  rc = rcl_action_publish_status(&data.server, &status_msg.msg);
-  rcl_action_goal_status_array_fini(&status_msg);
-
-  return (rc == RCL_RET_OK) ? T : NIL;
-}
-
-pointer ROSEUS_ACTION_TAKE_RESULT_REQUEST(register context* ctx, int n, pointer* argv) {
-  isInstalledCheck;
-  ckarg(2);
-  string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
-  else error(E_NOSTRING);
-  pointer eus_request = argv[1];
-
-  auto it = s_mapActionServers.find(action_name);
-  if (it == s_mapActionServers.end()) return (NIL);
-  auto& data = *it->second;
-
-  auto req_members = data.result_svc_intro->request_members_;
-  vector<uint8_t> req_buf(req_members->size_of_, 0);
-  req_members->init_function(req_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
-
-  rcl_ret_t rc = rcl_action_take_result_request(
-      &data.server, &data.last_result_request_header, req_buf.data());
-
-  if (rc != RCL_RET_OK) {
-    req_members->fini_function(req_buf.data());
-    return (NIL);
-  }
-
-  vpush(eus_request);
-  bool ok = cStructToEusMsg(req_buf.data(),
-                            data.action_ts->result_service_type_support->request_typesupport,
-                            eus_request);
-  vpop();
-  req_members->fini_function(req_buf.data());
-  return ok ? T : NIL;
+  return (T);
 }
 
 pointer ROSEUS_ACTION_SEND_RESULT_RESPONSE(register context* ctx, int n, pointer* argv) {
   isInstalledCheck;
-  ckarg(2);
+  ckarg(3);
   string action_name;
   if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
   else error(E_NOSTRING);
-  pointer eus_response = argv[1];
+  pointer eus_uuid = argv[1];
+  pointer eus_response = argv[2];
 
   auto it = s_mapActionServers.find(action_name);
   if (it == s_mapActionServers.end()) return (NIL);
   auto& data = *it->second;
 
-  auto resp_members = data.result_svc_intro->response_members_;
-  vector<uint8_t> resp_buf;
-  vpush(eus_response);
-  if (!eusMsgToCStruct(eus_response,
-                       data.action_ts->result_service_type_support->response_typesupport,
-                       resp_members, resp_buf)) {
-    vpop();
-    return (NIL);
+  rclcpp_action::GoalUUID uuid;
+  uuid.fill(0);
+  if (isstring(eus_uuid) && strlength(eus_uuid) >= 16) {
+    memcpy(uuid.data(), get_string(eus_uuid), 16);
   }
+
+  vpush(eus_response);
+  auto resp = eusMsgToOwnedCStruct(
+      eus_response,
+      data.action_ts->result_service_type_support->response_typesupport,
+      data.result_svc_intro->response_members_);
   vpop();
+  if (!resp) return (NIL);
 
-  rcl_ret_t rc = rcl_action_send_result_response(
-      &data.server, &data.last_result_request_header, resp_buf.data());
-  resp_members->fini_function(resp_buf.data());
-
-  if (rc != RCL_RET_OK) {
-    rcl_reset_error();
+  // publish_result() answers any already-pending result request for this UUID
+  // and retains the message for requests that have not arrived yet, hence the
+  // owning shared_ptr above.
+  try {
+    data.server->publish_result(uuid, resp);
+  } catch (const std::exception& e) {
+    RCLCPP_ERROR(s_node->get_logger(), "publish_result failed: %s", e.what());
     return (NIL);
   }
   return (T);
@@ -2564,18 +2653,17 @@ pointer ROSEUS_ACTION_TAKE_CANCEL_REQUEST(register context* ctx, int n, pointer*
   auto it = s_mapActionServers.find(action_name);
   if (it == s_mapActionServers.end()) return (NIL);
   auto& data = *it->second;
+  auto& srv = *data.server;
 
+  if (srv.pending_cancels.empty()) return (NIL);
+  srv.pending_cancels.erase(srv.pending_cancels.begin());
+
+  // ServerBase has already replied to the cancel request. The EusLisp layer
+  // only uses this to raise its preempt-requested flag, so an
+  // otherwise-default CancelGoal_Request is sufficient here.
   auto req_members = data.cancel_svc_intro->request_members_;
   vector<uint8_t> req_buf(req_members->size_of_, 0);
   req_members->init_function(req_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
-
-  rcl_ret_t rc = rcl_action_take_cancel_request(
-      &data.server, &data.last_cancel_request_header, req_buf.data());
-
-  if (rc != RCL_RET_OK) {
-    req_members->fini_function(req_buf.data());
-    return (NIL);
-  }
 
   vpush(eus_request);
   bool ok = cStructToEusMsg(req_buf.data(),
@@ -2584,40 +2672,6 @@ pointer ROSEUS_ACTION_TAKE_CANCEL_REQUEST(register context* ctx, int n, pointer*
   vpop();
   req_members->fini_function(req_buf.data());
   return ok ? T : NIL;
-}
-
-pointer ROSEUS_ACTION_SEND_CANCEL_RESPONSE(register context* ctx, int n, pointer* argv) {
-  isInstalledCheck;
-  ckarg(2);
-  string action_name;
-  if (isstring(argv[0])) action_name = resolveName((char*)get_string(argv[0]));
-  else error(E_NOSTRING);
-  pointer eus_response = argv[1];
-
-  auto it = s_mapActionServers.find(action_name);
-  if (it == s_mapActionServers.end()) return (NIL);
-  auto& data = *it->second;
-
-  auto resp_members = data.cancel_svc_intro->response_members_;
-  vector<uint8_t> resp_buf;
-  vpush(eus_response);
-  if (!eusMsgToCStruct(eus_response,
-                       data.action_ts->cancel_service_type_support->response_typesupport,
-                       resp_members, resp_buf)) {
-    vpop();
-    return (NIL);
-  }
-  vpop();
-
-  rcl_ret_t rc = rcl_action_send_cancel_response(
-      &data.server, &data.last_cancel_request_header, resp_buf.data());
-  resp_members->fini_function(resp_buf.data());
-
-  if (rc != RCL_RET_OK) {
-    rcl_reset_error();
-    return (NIL);
-  }
-  return (T);
 }
 
 pointer ROSEUS_ACTION_UPDATE_GOAL_STATE(register context* ctx, int n, pointer* argv) {
@@ -2631,13 +2685,14 @@ pointer ROSEUS_ACTION_UPDATE_GOAL_STATE(register context* ctx, int n, pointer* a
 
   auto it = s_mapActionServers.find(action_name);
   if (it == s_mapActionServers.end()) return (NIL);
-  auto& data = *it->second;
+  auto& srv = *it->second->server;
 
-  if (handle_idx < 0 || handle_idx >= (int)data.goal_handles.size()) return (NIL);
+  if (handle_idx < 0 || handle_idx >= (int)srv.goal_handles.size()) return (NIL);
 
   rcl_ret_t rc = rcl_action_update_goal_state(
-      data.goal_handles[handle_idx],
+      srv.goal_handles[handle_idx].get(),
       static_cast<rcl_action_goal_event_t>(goal_event));
+  if (rc != RCL_RET_OK) rcl_reset_error();
 
   return (rc == RCL_RET_OK) ? T : NIL;
 }
@@ -2652,8 +2707,13 @@ pointer ROSEUS_ACTION_NOTIFY_GOAL_DONE(register context* ctx, int n, pointer* ar
   auto it = s_mapActionServers.find(action_name);
   if (it == s_mapActionServers.end()) return (NIL);
 
-  rcl_ret_t rc = rcl_action_notify_goal_done(&it->second->server);
-  return (rc == RCL_RET_OK) ? T : NIL;
+  try {
+    it->second->server->notify_goal_terminal_state();
+  } catch (const std::exception& e) {
+    RCLCPP_ERROR(s_node->get_logger(), "notify_goal_terminal_state failed: %s", e.what());
+    return (NIL);
+  }
+  return (T);
 }
 
 /***********************************************************
@@ -2843,22 +2903,16 @@ pointer ___roseus(register context* ctx, int n, pointer* argv, pointer env) {
         "action-name\n\nDestroy action server.\n");
   defun(ctx, "ACTION-TAKE-GOAL-REQUEST", argv[0], (pointer(*)())ROSEUS_ACTION_TAKE_GOAL_REQUEST,
         "action-name request-instance\n\nTake goal request (server side).\n");
-  defun(ctx, "ACTION-SEND-GOAL-RESPONSE", argv[0], (pointer(*)())ROSEUS_ACTION_SEND_GOAL_RESPONSE,
-        "action-name response\n\nSend goal response (server side).\n");
   defun(ctx, "ACTION-ACCEPT-NEW-GOAL", argv[0], (pointer(*)())ROSEUS_ACTION_ACCEPT_NEW_GOAL,
         "action-name uuid-string\n\nAccept new goal. Returns handle index.\n");
   defun(ctx, "ACTION-PUBLISH-FEEDBACK", argv[0], (pointer(*)())ROSEUS_ACTION_PUBLISH_FEEDBACK,
         "action-name feedback-msg\n\nPublish feedback (server side).\n");
   defun(ctx, "ACTION-PUBLISH-STATUS", argv[0], (pointer(*)())ROSEUS_ACTION_PUBLISH_STATUS,
         "action-name\n\nPublish status (server side).\n");
-  defun(ctx, "ACTION-TAKE-RESULT-REQUEST", argv[0], (pointer(*)())ROSEUS_ACTION_TAKE_RESULT_REQUEST,
-        "action-name request-instance\n\nTake result request (server side).\n");
   defun(ctx, "ACTION-SEND-RESULT-RESPONSE", argv[0], (pointer(*)())ROSEUS_ACTION_SEND_RESULT_RESPONSE,
-        "action-name response\n\nSend result response (server side).\n");
+        "action-name goal-uuid response\n\nSend result response (server side).\n");
   defun(ctx, "ACTION-TAKE-CANCEL-REQUEST", argv[0], (pointer(*)())ROSEUS_ACTION_TAKE_CANCEL_REQUEST,
         "action-name request-instance\n\nTake cancel request (server side).\n");
-  defun(ctx, "ACTION-SEND-CANCEL-RESPONSE", argv[0], (pointer(*)())ROSEUS_ACTION_SEND_CANCEL_RESPONSE,
-        "action-name response\n\nSend cancel response (server side).\n");
   defun(ctx, "ACTION-UPDATE-GOAL-STATE", argv[0], (pointer(*)())ROSEUS_ACTION_UPDATE_GOAL_STATE,
         "action-name handle-index goal-event\n\nUpdate goal state.\n");
   defun(ctx, "ACTION-NOTIFY-GOAL-DONE", argv[0], (pointer(*)())ROSEUS_ACTION_NOTIFY_GOAL_DONE,
