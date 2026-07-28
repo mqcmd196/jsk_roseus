@@ -84,6 +84,7 @@
   <test_depend condition="$ROS_VERSION == 2">launch_testing</test_depend>
   <test_depend condition="$ROS_VERSION == 2">launch_testing_ament_cmake</test_depend>
   <test_depend condition="$ROS_VERSION == 2">control_msgs</test_depend>
+  <test_depend condition="$ROS_VERSION == 2">ros2topic</test_depend>
 
   <member_of_group>rosidl_interface_packages</member_of_group>
 
