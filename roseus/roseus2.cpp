@@ -949,18 +949,27 @@ pointer ROSEUS_SERVICE_CALL(register context* ctx, int n, pointer* argv) {
   pointer response = csend(ctx, emessage, K_ROSEUS_RESPONSE, 0);
   vpush(response);
 
-  // Find or create service client
+  // Find or create service client.
+  //
+  // The client is cached regardless of the ROS 1 `persistent` flag. ROS 2 has no
+  // persistent-connection concept -- a service client is just a DDS entity that
+  // exists for as long as you hold it -- so there is nothing for the flag to
+  // switch off. Creating one per call instead leaked: rclcpp keeps clients in
+  // the node's callback group and only skips expired weak_ptrs rather than
+  // erasing them, so that list grew by one entry per call, the executor
+  // re-walked it to rebuild its wait set on every spin, and the call path
+  // eventually stopped making progress entirely (observed as a hard hang at
+  // ~570 calls in test-add-two-ints-many). It also paid a fresh
+  // wait_for_service() discovery round on every single call.
   shared_ptr<rclcpp::GenericClient> client;
   auto it = s_mapServiceClients.find(service);
-  if (persist && it != s_mapServiceClients.end()) {
+  if (it != s_mapServiceClients.end()) {
     client = std::dynamic_pointer_cast<rclcpp::GenericClient>(it->second);
   }
 
   if (!client) {
     client = s_node->create_generic_client(service, datatype);
-    if (persist) {
-      s_mapServiceClients[service] = client;
-    }
+    s_mapServiceClients[service] = client;
   }
 
   // Wait for service
