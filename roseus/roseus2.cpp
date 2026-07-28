@@ -66,8 +66,6 @@
 #include <rcl_action/rcl_action.h>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <action_msgs/msg/goal_status.hpp>
-#include <rmw/rmw.h>
-#include <rcutils/logging.h>
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <rosidl_typesupport_cpp/message_type_support.hpp>
 #include <rosidl_typesupport_introspection_cpp/service_introspection.hpp>
@@ -541,33 +539,29 @@ pointer ROSEUS_OK(register context* ctx, int n, pointer* argv) {
  *   Logging
  ************************************************************/
 
-#define def_rosconsole_formatter(funcname, loglevel)                          \
-  pointer funcname(register context* ctx, int n, pointer* argv) {             \
-    pointer *argv2, msg;                                                      \
-    int argc2;                                                                \
-    argc2 = n + 1;                                                            \
-    argv2 = (pointer*)malloc(sizeof(pointer) * argc2);                        \
-    argv2[0] = NIL;                                                           \
-    for (int i = 0; i < n; i++) argv2[i + 1] = argv[i];                       \
-    msg = XFORMAT(ctx, argc2, argv2);                                         \
-    if (s_bInstalled) {                                                       \
-      RCUTILS_LOG_COND_NAMED(loglevel, RCUTILS_LOG_CONDITION_EMPTY,           \
-                             RCUTILS_LOG_CONDITION_EMPTY, s_node->get_name(), \
-                             "%s", msg->c.str.chars);                         \
-    } else {                                                                  \
-      RCUTILS_LOG_COND_NAMED(loglevel, RCUTILS_LOG_CONDITION_EMPTY,           \
-                             RCUTILS_LOG_CONDITION_EMPTY, "roseus",           \
-                             "%s", msg->c.str.chars);                         \
-    }                                                                         \
-    free(argv2);                                                              \
-    return (T);                                                               \
+// rclcpp_log_macro is one of RCLCPP_DEBUG/INFO/WARN/ERROR/FATAL. rclcpp has no
+// severity-parameterized logging call, so the macro itself is the parameter.
+#define def_rosconsole_formatter(funcname, rclcpp_log_macro)      \
+  pointer funcname(register context* ctx, int n, pointer* argv) { \
+    pointer *argv2, msg;                                          \
+    int argc2;                                                    \
+    argc2 = n + 1;                                                \
+    argv2 = (pointer*)malloc(sizeof(pointer) * argc2);            \
+    argv2[0] = NIL;                                               \
+    for (int i = 0; i < n; i++) argv2[i + 1] = argv[i];           \
+    msg = XFORMAT(ctx, argc2, argv2);                             \
+    rclcpp_log_macro(s_bInstalled ? s_node->get_logger()          \
+                                  : rclcpp::get_logger("roseus"), \
+                     "%s", msg->c.str.chars);                     \
+    free(argv2);                                                  \
+    return (T);                                                   \
   }
 
-def_rosconsole_formatter(ROSEUS_ROSDEBUG, RCUTILS_LOG_SEVERITY_DEBUG);
-def_rosconsole_formatter(ROSEUS_ROSINFO, RCUTILS_LOG_SEVERITY_INFO);
-def_rosconsole_formatter(ROSEUS_ROSWARN, RCUTILS_LOG_SEVERITY_WARN);
-def_rosconsole_formatter(ROSEUS_ROSERROR, RCUTILS_LOG_SEVERITY_ERROR);
-def_rosconsole_formatter(ROSEUS_ROSFATAL, RCUTILS_LOG_SEVERITY_FATAL);
+def_rosconsole_formatter(ROSEUS_ROSDEBUG, RCLCPP_DEBUG);
+def_rosconsole_formatter(ROSEUS_ROSINFO, RCLCPP_INFO);
+def_rosconsole_formatter(ROSEUS_ROSWARN, RCLCPP_WARN);
+def_rosconsole_formatter(ROSEUS_ROSERROR, RCLCPP_ERROR);
+def_rosconsole_formatter(ROSEUS_ROSFATAL, RCLCPP_FATAL);
 
 pointer ROSEUS_SET_LOGGER_LEVEL(register context* ctx, int n, pointer* argv) {
   ckarg(2);
@@ -576,28 +570,35 @@ pointer ROSEUS_SET_LOGGER_LEVEL(register context* ctx, int n, pointer* argv) {
   else error(E_NOSTRING);
   int log_level = intval(argv[1]);
 
-  rcutils_ret_t ret;
+  rclcpp::Logger::Level level;
   switch (log_level) {
     case 1:
-      ret = rcutils_logging_set_logger_level(logger.c_str(), RCUTILS_LOG_SEVERITY_DEBUG);
+      level = rclcpp::Logger::Level::Debug;
       break;
     case 2:
-      ret = rcutils_logging_set_logger_level(logger.c_str(), RCUTILS_LOG_SEVERITY_INFO);
+      level = rclcpp::Logger::Level::Info;
       break;
     case 3:
-      ret = rcutils_logging_set_logger_level(logger.c_str(), RCUTILS_LOG_SEVERITY_WARN);
+      level = rclcpp::Logger::Level::Warn;
       break;
     case 4:
-      ret = rcutils_logging_set_logger_level(logger.c_str(), RCUTILS_LOG_SEVERITY_ERROR);
+      level = rclcpp::Logger::Level::Error;
       break;
     case 5:
-      ret = rcutils_logging_set_logger_level(logger.c_str(), RCUTILS_LOG_SEVERITY_FATAL);
+      level = rclcpp::Logger::Level::Fatal;
       break;
     default:
       return (NIL);
   }
 
-  return (ret == RCUTILS_RET_OK) ? T : NIL;
+  // rclcpp::Logger::set_level() reports failure by throwing, unlike the
+  // rcutils call it replaces which returned a status code.
+  try {
+    rclcpp::get_logger(logger).set_level(level);
+  } catch (const rclcpp::exceptions::RCLError& e) {
+    return (NIL);
+  }
+  return (T);
 }
 
 pointer ROSEUS_EXIT(register context* ctx, int n, pointer* argv) {
@@ -970,7 +971,7 @@ pointer ROSEUS_SERVICE_CALL(register context* ctx, int n, pointer* argv) {
     return (NIL);
   }
 
-  // Get type support for rmw_serialize/rmw_deserialize
+  // Get type support for CDR serialization (rclcpp::SerializationBase)
   auto ts_lib = rclcpp::get_typesupport_library(datatype, "rosidl_typesupport_cpp");
   auto srv_ts = rclcpp::get_service_typesupport_handle(
       datatype, "rosidl_typesupport_cpp", *ts_lib);
@@ -992,12 +993,10 @@ pointer ROSEUS_SERVICE_CALL(register context* ctx, int n, pointer* argv) {
   req_members->init_function(
       req_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
 
-  rmw_ret_t rmw_rc = rmw_deserialize(
-      &serialized_req.get_rcl_serialized_message(),
-      srv_ts->request_typesupport,
-      req_buf.data());
-
-  if (rmw_rc != RMW_RET_OK) {
+  try {
+    rclcpp::SerializationBase(srv_ts->request_typesupport)
+        .deserialize_message(&serialized_req, req_buf.data());
+  } catch (const std::exception& e) {
     RCLCPP_ERROR(s_node->get_logger(),
                  "failed to deserialize request for service %s", service.c_str());
     req_members->fini_function(req_buf.data());
@@ -1027,30 +1026,16 @@ pointer ROSEUS_SERVICE_CALL(register context* ctx, int n, pointer* argv) {
   auto raw_response = future_and_id.get();
 
   if (raw_response) {
-    // Serialize C struct response to CDR via rmw_serialize
-    rcl_serialized_message_t resp_serialized = rmw_get_zero_initialized_serialized_message();
-    rcutils_allocator_t allocator = rcutils_get_default_allocator();
-    rmw_serialized_message_init(&resp_serialized, 256, &allocator);
-
-    rmw_rc = rmw_serialize(
-        raw_response.get(), srv_ts->response_typesupport, &resp_serialized);
-
-    if (rmw_rc == RMW_RET_OK) {
-      // Wrap in SerializedMessage for deserializeEusMessage
-      auto serialized_resp = std::make_shared<rclcpp::SerializedMessage>(
-          resp_serialized.buffer_length);
-      auto& rcl_msg = serialized_resp->get_rcl_serialized_message();
-      memcpy(rcl_msg.buffer, resp_serialized.buffer, resp_serialized.buffer_length);
-      rcl_msg.buffer_length = resp_serialized.buffer_length;
-
+    auto serialized_resp = std::make_shared<rclcpp::SerializedMessage>();
+    try {
+      rclcpp::SerializationBase(srv_ts->response_typesupport)
+          .serialize_message(raw_response.get(), serialized_resp.get());
       // CDR → EusLisp response
       deserializeEusMessage(response, serialized_resp);
-    } else {
+    } catch (const std::exception& e) {
       RCLCPP_ERROR(s_node->get_logger(),
                    "failed to serialize response for service %s", service.c_str());
     }
-
-    rmw_serialized_message_fini(&resp_serialized);
   }
 
   req_members->fini_function(req_buf.data());
@@ -1117,7 +1102,7 @@ pointer ROSEUS_ADVERTISE_SERVICE(register context* ctx, int n, pointer* argv) {
   vpush(request_class);
   vpush(response_class);
 
-  // Get type support for rmw_serialize/rmw_deserialize
+  // Get type support for CDR serialization (rclcpp::SerializationBase)
   auto ts_lib = rclcpp::get_typesupport_library(datatype, "rosidl_typesupport_cpp");
   auto srv_ts = rclcpp::get_service_typesupport_handle(
       datatype, "rosidl_typesupport_cpp", *ts_lib);
@@ -1183,18 +1168,13 @@ pointer ROSEUS_ADVERTISE_SERVICE(register context* ctx, int n, pointer* argv) {
 
         if (rc == RCL_RET_OK) {
           // C struct request → CDR
-          rcl_serialized_message_t serialized_req_buf =
-              rmw_get_zero_initialized_serialized_message();
-          rcutils_allocator_t allocator = rcutils_get_default_allocator();
-          rmw_serialized_message_init(&serialized_req_buf, 256, &allocator);
-
-          rmw_ret_t rmw_rc = rmw_serialize(
-              req_buf.data(), srv_ts->request_typesupport, &serialized_req_buf);
-
-          if (rmw_rc != RMW_RET_OK) {
+          auto sm = std::make_shared<rclcpp::SerializedMessage>();
+          try {
+            rclcpp::SerializationBase(srv_ts->request_typesupport)
+                .serialize_message(req_buf.data(), sm.get());
+          } catch (const std::exception& e) {
             RCLCPP_ERROR(rclcpp::get_logger("roseus"),
                          "service %s: failed to serialize request to CDR", service.c_str());
-            rmw_serialized_message_fini(&serialized_req_buf);
             req_members->fini_function(req_buf.data());
             return;
           }
@@ -1204,14 +1184,6 @@ pointer ROSEUS_ADVERTISE_SERVICE(register context* ctx, int n, pointer* argv) {
               isclass(request_class) ? request_class : classof(request_class));
           vpush(req_instance);
           csend(ctx, req_instance, K_ROSEUS_INIT, 0);
-
-          auto sm = std::make_shared<rclcpp::SerializedMessage>(
-              serialized_req_buf.buffer_length);
-          auto& rcl_msg = sm->get_rcl_serialized_message();
-          memcpy(rcl_msg.buffer, serialized_req_buf.buffer,
-                 serialized_req_buf.buffer_length);
-          rcl_msg.buffer_length = serialized_req_buf.buffer_length;
-          rmw_serialized_message_fini(&serialized_req_buf);
 
           deserializeEusMessage(req_instance, sm);
 
@@ -1271,12 +1243,9 @@ pointer ROSEUS_ADVERTISE_SERVICE(register context* ctx, int n, pointer* argv) {
           resp_members->init_function(
               resp_buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
 
-          rmw_rc = rmw_deserialize(
-              &resp_cdr.get_rcl_serialized_message(),
-              srv_ts->response_typesupport,
-              resp_buf.data());
-
-          if (rmw_rc == RMW_RET_OK) {
+          try {
+            rclcpp::SerializationBase(srv_ts->response_typesupport)
+                .deserialize_message(&resp_cdr, resp_buf.data());
             rcl_ret_t send_rc = rcl_send_response(
                 srv_shared.get(), &request_header.request_id, resp_buf.data());
             if (send_rc != RCL_RET_OK) {
@@ -1285,7 +1254,7 @@ pointer ROSEUS_ADVERTISE_SERVICE(register context* ctx, int n, pointer* argv) {
                            service.c_str(), rcl_get_error_string().str);
               rcl_reset_error();
             }
-          } else {
+          } catch (const std::exception& e) {
             RCLCPP_ERROR(rclcpp::get_logger("roseus"),
                          "service %s: failed to deserialize response CDR",
                          service.c_str());
@@ -1792,9 +1761,12 @@ static bool eusMsgToCStruct(pointer eus_msg,
   intro->init_function(buf.data(), rosidl_runtime_cpp::MessageInitialization::ALL);
 
   rclcpp::SerializedMessage cdr = serializeEusMessage(eus_msg);
-  rmw_ret_t rc = rmw_deserialize(
-      &cdr.get_rcl_serialized_message(), msg_ts, buf.data());
-  if (rc != RMW_RET_OK) {
+  // rclcpp::SerializationBase wraps rmw_serialize/rmw_deserialize and takes the
+  // type support at run time, so it works with the dynamically loaded type
+  // supports roseus uses. It reports failure by throwing rather than returning.
+  try {
+    rclcpp::SerializationBase(msg_ts).deserialize_message(&cdr, buf.data());
+  } catch (const std::exception& e) {
     intro->fini_function(buf.data());
     return false;
   }
@@ -1805,21 +1777,12 @@ static bool eusMsgToCStruct(pointer eus_msg,
 static bool cStructToEusMsg(const void* c_struct,
                             const rosidl_message_type_support_t* msg_ts,
                             pointer eus_msg) {
-  rcl_serialized_message_t serialized = rmw_get_zero_initialized_serialized_message();
-  rcutils_allocator_t allocator = rcutils_get_default_allocator();
-  rmw_serialized_message_init(&serialized, 256, &allocator);
-
-  rmw_ret_t rc = rmw_serialize(c_struct, msg_ts, &serialized);
-  if (rc != RMW_RET_OK) {
-    rmw_serialized_message_fini(&serialized);
+  auto sm = std::make_shared<rclcpp::SerializedMessage>();
+  try {
+    rclcpp::SerializationBase(msg_ts).serialize_message(c_struct, sm.get());
+  } catch (const std::exception& e) {
     return false;
   }
-
-  auto sm = std::make_shared<rclcpp::SerializedMessage>(serialized.buffer_length);
-  auto& rcl_msg = sm->get_rcl_serialized_message();
-  memcpy(rcl_msg.buffer, serialized.buffer, serialized.buffer_length);
-  rcl_msg.buffer_length = serialized.buffer_length;
-  rmw_serialized_message_fini(&serialized);
 
   deserializeEusMessage(eus_msg, sm);
   return true;
@@ -2248,8 +2211,9 @@ static shared_ptr<void> eusMsgToOwnedCStruct(
   intro->init_function(buf, rosidl_runtime_cpp::MessageInitialization::ALL);
 
   rclcpp::SerializedMessage cdr = serializeEusMessage(eus_msg);
-  rmw_ret_t rc = rmw_deserialize(&cdr.get_rcl_serialized_message(), msg_ts, buf);
-  if (rc != RMW_RET_OK) {
+  try {
+    rclcpp::SerializationBase(msg_ts).deserialize_message(&cdr, buf);
+  } catch (const std::exception& e) {
     intro->fini_function(buf);
     free(buf);
     return nullptr;
