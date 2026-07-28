@@ -1742,11 +1742,11 @@ loadActionTypeSupport(const string& action_type,
 
   // Load library
   auto lib = rclcpp::get_typesupport_library(
-      action_type, "rosidl_typesupport_c");
+      action_type, "rosidl_typesupport_cpp");
   libs.push_back(lib);
 
   // Build symbol name
-  string symbol = "rosidl_typesupport_c__get_action_type_support_handle__" + pkg + "__action__" + name;
+  string symbol = "rosidl_typesupport_cpp__get_action_type_support_handle__" + pkg + "__action__" + name;
 
   typedef const rosidl_action_type_support_t* (*GetTSFunc)();
   auto func = reinterpret_cast<GetTSFunc>(lib->get_symbol(symbol.c_str()));
