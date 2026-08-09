@@ -864,26 +864,44 @@ def _cdr_alignment(f):
     return 1
 
 
-def _write_cdr_align_serialize(s, align):
-    """Write CDR alignment padding for serialize (stream-based)."""
+def _write_cdr_align_serialize(s, align, guard=None):
+    """Write CDR alignment padding for serialize (stream-based).
+
+    When GUARD (a lisp predicate string) is given, the padding is only
+    emitted when GUARD is true. This is used for the element alignment of
+    dynamic arrays: CDR does not insert element-alignment padding after the
+    length of an EMPTY sequence, so the padding must be skipped when the
+    array has no elements (otherwise nested messages get corrupted).
+    """
     if align <= 1:
         return
+    if guard:
+        s.write(f'(when {guard}')
     # Subtract 4 for the CDR header that was written at the start
     s.write(
         f'(let ((pad (logand (- {align}'
         f' (logand (- (stream-count s) 4) {align - 1}))'
         f' {align - 1})))')
-    s.write(f'  (dotimes (_ pad) (write-byte 0 s)))')
+    s.write('  (dotimes (_ pad) (write-byte 0 s)))' + (')' if guard else ''))
 
 
-def _write_cdr_align_deserialize(s, align):
-    """Write CDR alignment for deserialize (advance ptr-)."""
+def _write_cdr_align_deserialize(s, align, guard=None):
+    """Write CDR alignment for deserialize (advance ptr-).
+
+    GUARD works as in _write_cdr_align_serialize: the alignment is only
+    applied when GUARD is true (used to skip element alignment for empty
+    dynamic arrays, matching the serialize side and upstream rmw).
+    """
     if align <= 1:
         return
     # Alignment is relative to CDR payload start (after 4-byte header)
-    s.write(
+    line = (
         f'(setq ptr- (+ 4 (logand (+ (- ptr- 4) {align - 1})'
         f' (lognot {align - 1}))))')
+    if guard:
+        s.write(f'(when {guard} {line})')
+    else:
+        s.write(line)
 
 
 def _write_serialize_cdr_builtin(s, f, v):
@@ -941,7 +959,11 @@ def _write_serialize_cdr_field(s, f):
             s.write(f'(write-long (length {slot}) s)')
         if f.is_builtin:
             align = _cdr_alignment(f)
-            _write_cdr_align_serialize(s, align)
+            # Skip element alignment for empty dynamic arrays (see
+            # _write_cdr_align_serialize); fixed-length arrays always align.
+            _write_cdr_align_serialize(
+                s, align,
+                guard=(None if f.array_len else f'(> (length {slot}) 0)'))
             if f.array_len:
                 s.write(f'(dotimes (i {f.array_len})')
             else:
@@ -1097,7 +1119,7 @@ def _write_deserialize_cdr_field(s, f):
                             f'(setq {var}'
                             f' (instantiate {lt}-vector n))')
                     _write_cdr_align_deserialize(
-                        s, _cdr_alignment(f))
+                        s, _cdr_alignment(f), guard='(> n 0)')
                     s.write('(dotimes (i n)')
                     with Indent(s):
                         _write_deserialize_cdr_builtin(

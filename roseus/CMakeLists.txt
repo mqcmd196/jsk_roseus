@@ -104,6 +104,7 @@ if(BUILD_TESTING)
   # Stress tests: the high iteration counts are the point
   add_launch_test(test/add-two-ints.test.py TIMEOUT 120)
   add_launch_test(test/follow-joint-trajectory.test.py TIMEOUT 60)
+  add_launch_test(test/cdr-nested-empty-array.test.py TIMEOUT 60)
 
   set_tests_properties(
     test_mark_lock
