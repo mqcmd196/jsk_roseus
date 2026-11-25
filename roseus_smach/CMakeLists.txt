@@ -1,3 +1,45 @@
+if($ENV{ROS_VERSION} EQUAL 2)
+cmake_minimum_required(VERSION 3.8)
+project(roseus_smach)
+
+find_package(ament_cmake REQUIRED)
+# find_package(roseus) registers the hook that generates euslisp files of the
+# interface packages found below (roseus_generate_dep_msgs.cmake)
+find_package(roseus REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+find_package(rosidl_generator_eus REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(action_msgs REQUIRED)
+find_package(example_interfaces REQUIRED)
+# smach_msgs is only for smach_viewer (state-machine-inspector)
+find_package(smach_msgs QUIET)
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  action/Multiply10.action
+  action/Sub5.action
+  DEPENDENCIES action_msgs
+)
+
+install(DIRECTORY sample src test
+  DESTINATION share/${PROJECT_NAME}
+  USE_SOURCE_PERMISSIONS)
+
+if(BUILD_TESTING)
+  find_package(launch_testing_ament_cmake REQUIRED)
+  add_test(NAME test_roseus_smach_utils
+    COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-roseus-smach-utils.l)
+  add_test(NAME test_parallel_state_machine
+    COMMAND roseus ${CMAKE_CURRENT_SOURCE_DIR}/test/test-parallel-state-machine.l)
+  set_tests_properties(test_roseus_smach_utils test_parallel_state_machine
+    PROPERTIES TIMEOUT 120)
+  add_launch_test(test/ros2/samples.test.py TIMEOUT 300)
+  add_launch_test(test/ros2/async-join-state-machine-actionlib.test.py TIMEOUT 120)
+endif()
+
+ament_export_dependencies(rosidl_default_runtime)
+ament_package()
+
+else() # if($ENV{ROS_VERSION} EQUAL 2)
 cmake_minimum_required(VERSION 2.8.3)
 project(roseus_smach)
 
@@ -34,3 +76,4 @@ if(CATKIN_ENABLE_TESTING)
   add_rostest(test/test_parallel_state_machine_sample.test)
 endif()
 
+endif() # if($ENV{ROS_VERSION} EQUAL 2)

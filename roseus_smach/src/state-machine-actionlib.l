@@ -79,6 +79,44 @@
   )
 
 ;;
+;; goal state of a simple-action-client as a keyword:
+;;   :succeeded, :aborted, :canceled (preempted/recalled/rejected),
+;;   :canceling (preempting/recalling), :active (active/pending) or nil
+;; ROS 1 actionlib uses actionlib_msgs/GoalStatus, ROS 2 (actionlib2.l)
+;; uses action_msgs/GoalStatus (ros::*action-goal-state-...*)
+;;
+;; the reader reads the forms skipped by #-:ros2, so the packages must exist
+(unless (find-package "ACTIONLIB_MSGS") (make-package "ACTIONLIB_MSGS"))
+(unless (find-package "ACTIONLIB_MSGS::GOALSTATUS") (make-package "ACTIONLIB_MSGS::GOALSTATUS"))
+(defun actionlib-client-goal-state (client)
+  (let ((st (send client :get-state)))
+    #-:ros2
+    (cond
+      ((eq st actionlib_msgs::GoalStatus::*SUCCEEDED*) :succeeded)
+      ((eq st actionlib_msgs::GoalStatus::*ABORTED*) :aborted)
+      ((member st (list actionlib_msgs::GoalStatus::*PREEMPTED*
+                        actionlib_msgs::GoalStatus::*RECALLED*
+                        actionlib_msgs::GoalStatus::*REJECTED*)) :canceled)
+      ((member st (list actionlib_msgs::GoalStatus::*PREEMPTING*
+                        actionlib_msgs::GoalStatus::*RECALLING*)) :canceling)
+      ((member st (list actionlib_msgs::GoalStatus::*ACTIVE*
+                        actionlib_msgs::GoalStatus::*PENDING*)) :active))
+    #+:ros2
+    (cond
+      ((eq st ros::*action-goal-state-succeeded*) :succeeded)
+      ((eq st ros::*action-goal-state-aborted*) :aborted)
+      ((eq st ros::*action-goal-state-canceled*) :canceled)
+      ((eq st ros::*action-goal-state-canceling*) :canceling)
+      ((member st (list ros::*action-goal-state-accepted*
+                        ros::*action-goal-state-executing*)) :active))))
+
+;; result of a finished goal. On ROS 2 the result is requested by
+;; :wait-for-result, the goal status alone does not bring it.
+(defun actionlib-client-result (client)
+  #+:ros2 (send client :wait-for-result :timeout 10)
+  (send client :get-result))
+
+;;
 ;; execute actionlib as a state machine
 ;; return 'state' instance
 ;;   this state needs :goal data, :cancel and :result are optional
@@ -110,34 +148,27 @@
               (ros::spin-once) ;; spin to update user cancel state
               (send ,client :spin-once)
               ;;
-              (cond
-                ((eq (send ,client :get-state) actionlib_msgs::GoalStatus::*SUCCEEDED*)
-                 (set-alist :result (send ,client :get-result) userdata)
+              (case (actionlib-client-goal-state ,client)
+                (:succeeded
+                 (set-alist :result (actionlib-client-result ,client) userdata)
                  (return ,return-success))
-                ((eq (send ,client :get-state) actionlib_msgs::GoalStatus::*ABORTED*)
+                (:aborted
                  (if ,retry
                      (send ,client :send-goal
                            (funcall (quote ,key) (cdr (assoc :goal userdata))))
                      (progn
-                       (set-alist :result (send ,client :get-result) userdata)
+                       (set-alist :result (actionlib-client-result ,client) userdata)
                        (return ,return-fail))))
-                ((member (send ,client :get-state)
-                         (list actionlib_msgs::GoalStatus::*PREEMPTED*
-                               actionlib_msgs::GoalStatus::*RECALLED*
-                               actionlib_msgs::GoalStatus::*REJECTED*))
+                (:canceled
                  (ros::ros-info "~A was canceled" (send ,client :name))
                  (set-alist :cancel t userdata)
-                 (set-alist :result (send ,client :get-result) userdata)
+                 (set-alist :result (actionlib-client-result ,client) userdata)
                  (return ,return-fail))
-                ((member (send ,client :get-state)
-                         (list actionlib_msgs::GoalStatus::*PREEMPTING*
-                               actionlib_msgs::GoalStatus::*RECALLING*))
+                (:canceling
                  (when (> (send (ros::time- (ros::time-now) last-warn) :to-sec) 1.0)
                    (ros::ros-info "Waiting for cancellation of ~A" (send ,client :name))
                    (setq last-warn (ros::time-now))))
-                ((member (send ,client :get-state)
-                         (list actionlib_msgs::GoalStatus::*ACTIVE*
-                               actionlib_msgs::GoalStatus::*PENDING*))
+                (:active
                  ;; user cancel
                  (when (and (cdr (assoc :cancel userdata))
                             (derivedp (cdr (assoc :cancel userdata)) binary-state-object)

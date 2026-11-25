@@ -10,6 +10,8 @@
   (load-library "roseus.so" '("roseus")))
 
 (unless (member :ros *features*) (push :ros *features*))
+;; :ros2 for the code shared by ROS 1 and ROS 2 (#+:ros2 / #-:ros2)
+(when (fboundp 'ros::action-client-init) (pushnew :ros2 *features*))
 (warning-message 3 ";; loading roseus(~A) on euslisp(~A)~%" (car ros::roseus-repo-version) lisp::lisp-implementation-version)
 
 (in-package "ROS")
@@ -102,6 +104,32 @@
 			(format nil "~A.~A" (subseq str 0 dpt)
 				(subseq str dpt (+ 3 dpt)))))) ;; print .xxx
   )
+
+;; ROS 2: builtin_interfaces/Time and Duration fields of messages are
+;; builtin_interfaces::Time/Duration. Give ros::time (and ros::duration) the
+;; same CDR methods, so that a ros::time can be set to those fields as in
+;; ROS 1, e.g. (send msg :header :stamp (ros::time-now)).
+(defmethod ros::time
+  (:nanosec (&optional s) (send self :nsec s))
+  (:serialization-length-cdr ()
+   (+ 4 3 4 3 4)) ;; CDR header, (padding + int32 sec), (padding + uint32 nanosec)
+  (:serialize-cdr
+   (&optional strm)
+   (let ((s (if strm strm
+              (make-string-output-stream (send self :serialization-length-cdr)))))
+     (unless strm ;; CDR header, only at top level
+       (write-byte 0 s) (write-byte 1 s) (write-byte 0 s) (write-byte 0 s))
+     (dolist (v (list (elt sec-nsec 0) (elt sec-nsec 1)))
+       (dotimes (_ (logand (- 4 (logand (- (stream-count s) 4) 3)) 3)) (write-byte 0 s))
+       (write-long v s))
+     (if (null strm) (get-output-stream-string s))))
+  (:deserialize-cdr
+   (buf &optional (ptr- 0))
+   (when (= ptr- 0) (incf ptr- 4)) ;; CDR header, only at top level
+   (dotimes (i 2)
+     (setq ptr- (+ 4 (logand (+ (- ptr- 4) 3) (lognot 3))))
+     (setf (elt sec-nsec i) (sys::peek buf ptr- :integer)) (incf ptr- 4))
+   ptr-))
 
 (defun ros::time (&optional (sec 0))
   "Create new ros::time instance"
