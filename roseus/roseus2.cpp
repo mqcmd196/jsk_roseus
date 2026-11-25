@@ -56,6 +56,7 @@
 #include <memory>
 #include <chrono>
 #include <functional>
+#include <tuple>
 
 // ROS 2 headers - MUST be included BEFORE eus.h keyword masking
 #include <rclcpp/rclcpp.hpp>
@@ -66,7 +67,7 @@
 #include <rcl_action/rcl_action.h>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <action_msgs/msg/goal_status.hpp>
-#include <ament_index_cpp/get_package_share_directory.hpp>
+#include <ament_index_cpp/get_package_share_path.hpp>
 #include <rosidl_typesupport_cpp/message_type_support.hpp>
 #include <rosidl_typesupport_introspection_cpp/service_introspection.hpp>
 #include <rosidl_typesupport_introspection_cpp/message_introspection.hpp>
@@ -81,11 +82,28 @@
 #define string eus_string
 
 #include "eus.h"
+
+// The type of the functions given to defun() and add_module_initializer():
+// pointer (*)() until EusLisp 9.31, pointer (*)(context *, int, pointer *)
+// since 9.32 (C23 / GCC 15). Take it from the declarations in eus.h.
+namespace eus_compat {
+template <typename T>
+struct args;
+template <typename R, typename... A>
+struct args<R(A...)> {
+  template <size_t N>
+  using type = typename std::tuple_element<N, std::tuple<A...>>::type;
+};
+}  // namespace eus_compat
+typedef eus_compat::args<decltype(defun)>::type<3> eus_defun_fn_t;
+typedef eus_compat::args<decltype(add_module_initializer)>::type<1>
+    eus_init_fn_t;
+
 extern "C" {
 pointer ___roseus(register context* ctx, int n, pointer* argv, pointer env);
 void register_roseus() {
   char modname[] = "___roseus";
-  return add_module_initializer(modname, (pointer(*)())___roseus);
+  return add_module_initializer(modname, (eus_init_fn_t)___roseus);
 }
 byte* get_string(register pointer s) {
   if (isstring(s)) return (s->c.str.chars);
@@ -1520,7 +1538,7 @@ pointer ROSEUS_ROSPACK_FIND(register context* ctx, int n, pointer* argv) {
   else error(E_NOSTRING);
 
   try {
-    string path = ament_index_cpp::get_package_share_directory(pkg);
+    string path = ament_index_cpp::get_package_share_path(pkg).string();
     return makestring((char*)path.c_str(), path.length());
   } catch (const std::exception& e) {
     return (NIL);
@@ -2745,158 +2763,158 @@ pointer ___roseus(register context* ctx, int n, pointer* argv, pointer env) {
   }
 
   // Core functions
-  defun(ctx, "ROSEUS-RAW", argv[0], (pointer(*)())ROSEUS, "");
-  defun(ctx, "SPIN", argv[0], (pointer(*)())ROSEUS_SPIN, "Enter simple event loop");
-  defun(ctx, "SPIN-ONCE", argv[0], (pointer(*)())ROSEUS_SPINONCE,
+  defun(ctx, "ROSEUS-RAW", argv[0], (eus_defun_fn_t)ROSEUS, "");
+  defun(ctx, "SPIN", argv[0], (eus_defun_fn_t)ROSEUS_SPIN, "Enter simple event loop");
+  defun(ctx, "SPIN-ONCE", argv[0], (eus_defun_fn_t)ROSEUS_SPINONCE,
         "&optional groupname  ;; spin only group\n\n"
         "Process a single round of callbacks.\n");
-  defun(ctx, "TIME-NOW-RAW", argv[0], (pointer(*)())ROSEUS_TIME_NOW, "");
-  defun(ctx, "RATE", argv[0], (pointer(*)())ROSEUS_RATE,
+  defun(ctx, "TIME-NOW-RAW", argv[0], (eus_defun_fn_t)ROSEUS_TIME_NOW, "");
+  defun(ctx, "RATE", argv[0], (eus_defun_fn_t)ROSEUS_RATE,
         "frequency\n\nConstruct ros timer for periodic sleeps");
-  defun(ctx, "SLEEP", argv[0], (pointer(*)())ROSEUS_SLEEP,
+  defun(ctx, "SLEEP", argv[0], (eus_defun_fn_t)ROSEUS_SLEEP,
         "Sleeps for any leftover time in a cycle.");
-  defun(ctx, "DURATION-SLEEP", argv[0], (pointer(*)())ROSEUS_DURATION_SLEEP,
+  defun(ctx, "DURATION-SLEEP", argv[0], (eus_defun_fn_t)ROSEUS_DURATION_SLEEP,
         "second\n\nSleeps for amount of the time specified by this duration.");
-  defun(ctx, "OK", argv[0], (pointer(*)())ROSEUS_OK,
+  defun(ctx, "OK", argv[0], (eus_defun_fn_t)ROSEUS_OK,
         "Check whether it's time to exit.");
 
   // Logging
-  defun(ctx, "ROS-DEBUG", argv[0], (pointer(*)())ROSEUS_ROSDEBUG,
+  defun(ctx, "ROS-DEBUG", argv[0], (eus_defun_fn_t)ROSEUS_ROSDEBUG,
         "write message to debug output");
-  defun(ctx, "ROS-INFO", argv[0], (pointer(*)())ROSEUS_ROSINFO,
+  defun(ctx, "ROS-INFO", argv[0], (eus_defun_fn_t)ROSEUS_ROSINFO,
         "write message to info output");
-  defun(ctx, "ROS-WARN", argv[0], (pointer(*)())ROSEUS_ROSWARN,
+  defun(ctx, "ROS-WARN", argv[0], (eus_defun_fn_t)ROSEUS_ROSWARN,
         "write message to warn output");
-  defun(ctx, "ROS-ERROR", argv[0], (pointer(*)())ROSEUS_ROSERROR,
+  defun(ctx, "ROS-ERROR", argv[0], (eus_defun_fn_t)ROSEUS_ROSERROR,
         "write message to error output");
-  defun(ctx, "ROS-FATAL", argv[0], (pointer(*)())ROSEUS_ROSFATAL,
+  defun(ctx, "ROS-FATAL", argv[0], (eus_defun_fn_t)ROSEUS_ROSFATAL,
         "write message to fatal output");
-  defun(ctx, "SET-LOGGER-LEVEL", argv[0], (pointer(*)())ROSEUS_SET_LOGGER_LEVEL, "");
-  defun(ctx, "EXIT", argv[0], (pointer(*)())ROSEUS_EXIT, "Exit ros client");
+  defun(ctx, "SET-LOGGER-LEVEL", argv[0], (eus_defun_fn_t)ROSEUS_SET_LOGGER_LEVEL, "");
+  defun(ctx, "EXIT", argv[0], (eus_defun_fn_t)ROSEUS_EXIT, "Exit ros client");
 
   // Pub/Sub
-  defun(ctx, "SUBSCRIBE", argv[0], (pointer(*)())ROSEUS_SUBSCRIBE,
+  defun(ctx, "SUBSCRIBE", argv[0], (eus_defun_fn_t)ROSEUS_SUBSCRIBE,
         "topicname message_type callbackfunc args0 ... argsN "
         "&optional (queuesize 1) &key (:groupname groupname)\n\n"
         "Subscribe to a topic.\n");
-  defun(ctx, "UNSUBSCRIBE", argv[0], (pointer(*)())ROSEUS_UNSUBSCRIBE,
+  defun(ctx, "UNSUBSCRIBE", argv[0], (eus_defun_fn_t)ROSEUS_UNSUBSCRIBE,
         "topicname\n\nUnsubscribe topic");
-  defun(ctx, "ADVERTISE", argv[0], (pointer(*)())ROSEUS_ADVERTISE,
+  defun(ctx, "ADVERTISE", argv[0], (eus_defun_fn_t)ROSEUS_ADVERTISE,
         "topic message_class &optional (queuesize 1) (latch nil)\n\n"
         "Advertise a topic.\n");
-  defun(ctx, "UNADVERTISE", argv[0], (pointer(*)())ROSEUS_UNADVERTISE,
+  defun(ctx, "UNADVERTISE", argv[0], (eus_defun_fn_t)ROSEUS_UNADVERTISE,
         "Unadvertise topic");
-  defun(ctx, "PUBLISH", argv[0], (pointer(*)())ROSEUS_PUBLISH,
+  defun(ctx, "PUBLISH", argv[0], (eus_defun_fn_t)ROSEUS_PUBLISH,
         "topic message\n\nPublish a message on the topic\n");
-  defun(ctx, "GET-NUM-PUBLISHERS", argv[0], (pointer(*)())ROSEUS_GETNUMPUBLISHERS,
+  defun(ctx, "GET-NUM-PUBLISHERS", argv[0], (eus_defun_fn_t)ROSEUS_GETNUMPUBLISHERS,
         "Returns the number of publishers on a topic.");
-  defun(ctx, "GET-NUM-SUBSCRIBERS", argv[0], (pointer(*)())ROSEUS_GETNUMSUBSCRIBERS,
+  defun(ctx, "GET-NUM-SUBSCRIBERS", argv[0], (eus_defun_fn_t)ROSEUS_GETNUMSUBSCRIBERS,
         "Returns the number of subscribers on a topic.");
 
   // Services
-  defun(ctx, "WAIT-FOR-SERVICE", argv[0], (pointer(*)())ROSEUS_WAIT_FOR_SERVICE,
+  defun(ctx, "WAIT-FOR-SERVICE", argv[0], (eus_defun_fn_t)ROSEUS_WAIT_FOR_SERVICE,
         "servicename &optional timeout\n\n"
         "Wait for a service to be advertised and available.");
-  defun(ctx, "SERVICE-EXISTS", argv[0], (pointer(*)())ROSEUS_SERVICE_EXISTS,
+  defun(ctx, "SERVICE-EXISTS", argv[0], (eus_defun_fn_t)ROSEUS_SERVICE_EXISTS,
         "servicename\n\nChecks if a service is advertised.");
-  defun(ctx, "SERVICE-CALL", argv[0], (pointer(*)())ROSEUS_SERVICE_CALL,
+  defun(ctx, "SERVICE-CALL", argv[0], (eus_defun_fn_t)ROSEUS_SERVICE_CALL,
         "servicename message_type &optional persist\n\nInvoke RPC service\n");
-  defun(ctx, "ADVERTISE-SERVICE", argv[0], (pointer(*)())ROSEUS_ADVERTISE_SERVICE,
+  defun(ctx, "ADVERTISE-SERVICE", argv[0], (eus_defun_fn_t)ROSEUS_ADVERTISE_SERVICE,
         "servicename message_type callbackfunc args0 ... argsN "
         "&key (:groupname groupname)\n\nAdvertise a service\n");
-  defun(ctx, "UNADVERTISE-SERVICE", argv[0], (pointer(*)())ROSEUS_UNADVERTISE_SERVICE,
+  defun(ctx, "UNADVERTISE-SERVICE", argv[0], (eus_defun_fn_t)ROSEUS_UNADVERTISE_SERVICE,
         "Unadvertise service");
 
   // Parameters
-  defun(ctx, "SET-PARAM", argv[0], (pointer(*)())ROSEUS_SET_PARAM,
+  defun(ctx, "SET-PARAM", argv[0], (eus_defun_fn_t)ROSEUS_SET_PARAM,
         "key value\n\nSet parameter");
-  defun(ctx, "GET-PARAM", argv[0], (pointer(*)())ROSEUS_GET_PARAM,
+  defun(ctx, "GET-PARAM", argv[0], (eus_defun_fn_t)ROSEUS_GET_PARAM,
         "key\n\nGet parameter");
-  defun(ctx, "HAS-PARAM", argv[0], (pointer(*)())ROSEUS_HAS_PARAM,
+  defun(ctx, "HAS-PARAM", argv[0], (eus_defun_fn_t)ROSEUS_HAS_PARAM,
         "Check whether a parameter exists.");
-  defun(ctx, "DELETE-PARAM", argv[0], (pointer(*)())ROSEUS_DELETE_PARAM,
+  defun(ctx, "DELETE-PARAM", argv[0], (eus_defun_fn_t)ROSEUS_DELETE_PARAM,
         "key\n\nDelete parameter");
 
   // Package utilities
-  defun(ctx, "ROSPACK-FIND", argv[0], (pointer(*)())ROSEUS_ROSPACK_FIND,
+  defun(ctx, "ROSPACK-FIND", argv[0], (eus_defun_fn_t)ROSEUS_ROSPACK_FIND,
         "Returns ros package share directory path");
-  defun(ctx, "ROSPACK-DEPENDS", argv[0], (pointer(*)())ROSEUS_ROSPACK_DEPENDS,
+  defun(ctx, "ROSPACK-DEPENDS", argv[0], (eus_defun_fn_t)ROSEUS_ROSPACK_DEPENDS,
         "Returns ros package dependencies list (stub in ROS 2)");
-  defun(ctx, "ROSPACK-PLUGINS", argv[0], (pointer(*)())ROSEUS_ROSPACK_PLUGINS,
+  defun(ctx, "ROSPACK-PLUGINS", argv[0], (eus_defun_fn_t)ROSEUS_ROSPACK_PLUGINS,
         "Returns plugins of ros packages (stub in ROS 2)");
 
   // Name resolution / Discovery
-  defun(ctx, "RESOLVE-NAME", argv[0], (pointer(*)())ROSEUS_RESOLVE_NAME,
+  defun(ctx, "RESOLVE-NAME", argv[0], (eus_defun_fn_t)ROSEUS_RESOLVE_NAME,
         "Returns ros resolved name");
-  defun(ctx, "GET-NAME", argv[0], (pointer(*)())ROSEUS_GETNAME,
+  defun(ctx, "GET-NAME", argv[0], (eus_defun_fn_t)ROSEUS_GETNAME,
         "Returns current node name");
-  defun(ctx, "GET-NAMESPACE", argv[0], (pointer(*)())ROSEUS_GETNAMESPACE,
+  defun(ctx, "GET-NAMESPACE", argv[0], (eus_defun_fn_t)ROSEUS_GETNAMESPACE,
         "Returns current node namespace");
-  defun(ctx, "GET-TOPICS", argv[0], (pointer(*)())ROSEUS_GET_TOPICS,
+  defun(ctx, "GET-TOPICS", argv[0], (eus_defun_fn_t)ROSEUS_GET_TOPICS,
         "Get the list of topics.");
-  defun(ctx, "GET-NODES", argv[0], (pointer(*)())ROSEUS_GET_NODES,
+  defun(ctx, "GET-NODES", argv[0], (eus_defun_fn_t)ROSEUS_GET_NODES,
         "Get the list of nodes.");
 
   // Timer / Callback Group
-  defun(ctx, "CREATE-TIMER", argv[0], (pointer(*)())ROSEUS_CREATE_TIMER,
+  defun(ctx, "CREATE-TIMER", argv[0], (eus_defun_fn_t)ROSEUS_CREATE_TIMER,
         "period callbackfunc args0 ... argsN "
         "&key (:oneshot oneshot) (:groupname groupname)\n\n"
         "Create periodic callbacks.\n");
-  defun(ctx, "CREATE-NODEHANDLE", argv[0], (pointer(*)())ROSEUS_CREATE_NODEHANDLE,
+  defun(ctx, "CREATE-NODEHANDLE", argv[0], (eus_defun_fn_t)ROSEUS_CREATE_NODEHANDLE,
         "groupname &optional namespace\n\nCreate callback group with given group name.\n");
 
   // Action Client
-  defun(ctx, "ACTION-CLIENT-INIT", argv[0], (pointer(*)())ROSEUS_ACTION_CLIENT_INIT,
+  defun(ctx, "ACTION-CLIENT-INIT", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_CLIENT_INIT,
         "action-name action-type\n\nInitialize action client.\n");
-  defun(ctx, "ACTION-CLIENT-DESTROY", argv[0], (pointer(*)())ROSEUS_ACTION_CLIENT_DESTROY,
+  defun(ctx, "ACTION-CLIENT-DESTROY", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_CLIENT_DESTROY,
         "action-name\n\nDestroy action client.\n");
-  defun(ctx, "ACTION-WAIT-FOR-SERVER", argv[0], (pointer(*)())ROSEUS_ACTION_WAIT_FOR_SERVER,
+  defun(ctx, "ACTION-WAIT-FOR-SERVER", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_WAIT_FOR_SERVER,
         "action-name &optional timeout\n\nWait for action server to be available.\n");
-  defun(ctx, "ACTION-SEND-GOAL", argv[0], (pointer(*)())ROSEUS_ACTION_SEND_GOAL,
+  defun(ctx, "ACTION-SEND-GOAL", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_SEND_GOAL,
         "action-name goal-request\n\nSend goal request. Returns sequence number.\n");
-  defun(ctx, "ACTION-TAKE-GOAL-RESPONSE", argv[0], (pointer(*)())ROSEUS_ACTION_TAKE_GOAL_RESPONSE,
+  defun(ctx, "ACTION-TAKE-GOAL-RESPONSE", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_TAKE_GOAL_RESPONSE,
         "action-name response-instance\n\nTake goal response.\n");
-  defun(ctx, "ACTION-SEND-RESULT-REQUEST", argv[0], (pointer(*)())ROSEUS_ACTION_SEND_RESULT_REQUEST,
+  defun(ctx, "ACTION-SEND-RESULT-REQUEST", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_SEND_RESULT_REQUEST,
         "action-name result-request\n\nSend result request.\n");
-  defun(ctx, "ACTION-TAKE-RESULT-RESPONSE", argv[0], (pointer(*)())ROSEUS_ACTION_TAKE_RESULT_RESPONSE,
+  defun(ctx, "ACTION-TAKE-RESULT-RESPONSE", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_TAKE_RESULT_RESPONSE,
         "action-name response-instance\n\nTake result response.\n");
-  defun(ctx, "ACTION-TAKE-FEEDBACK", argv[0], (pointer(*)())ROSEUS_ACTION_TAKE_FEEDBACK,
+  defun(ctx, "ACTION-TAKE-FEEDBACK", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_TAKE_FEEDBACK,
         "action-name feedback-instance\n\nTake feedback message.\n");
-  defun(ctx, "ACTION-TAKE-STATUS", argv[0], (pointer(*)())ROSEUS_ACTION_TAKE_STATUS,
+  defun(ctx, "ACTION-TAKE-STATUS", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_TAKE_STATUS,
         "action-name status-instance\n\nTake status array.\n");
-  defun(ctx, "ACTION-SEND-CANCEL", argv[0], (pointer(*)())ROSEUS_ACTION_SEND_CANCEL,
+  defun(ctx, "ACTION-SEND-CANCEL", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_SEND_CANCEL,
         "action-name cancel-request\n\nSend cancel request.\n");
-  defun(ctx, "ACTION-TAKE-CANCEL-RESPONSE", argv[0], (pointer(*)())ROSEUS_ACTION_TAKE_CANCEL_RESPONSE,
+  defun(ctx, "ACTION-TAKE-CANCEL-RESPONSE", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_TAKE_CANCEL_RESPONSE,
         "action-name response-instance\n\nTake cancel response.\n");
 
   // Action Server
-  defun(ctx, "ACTION-SERVER-INIT", argv[0], (pointer(*)())ROSEUS_ACTION_SERVER_INIT,
+  defun(ctx, "ACTION-SERVER-INIT", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_SERVER_INIT,
         "action-name action-type\n\nInitialize action server.\n");
-  defun(ctx, "ACTION-SERVER-DESTROY", argv[0], (pointer(*)())ROSEUS_ACTION_SERVER_DESTROY,
+  defun(ctx, "ACTION-SERVER-DESTROY", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_SERVER_DESTROY,
         "action-name\n\nDestroy action server.\n");
-  defun(ctx, "ACTION-TAKE-GOAL-REQUEST", argv[0], (pointer(*)())ROSEUS_ACTION_TAKE_GOAL_REQUEST,
+  defun(ctx, "ACTION-TAKE-GOAL-REQUEST", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_TAKE_GOAL_REQUEST,
         "action-name request-instance\n\nTake goal request (server side).\n");
-  defun(ctx, "ACTION-ACCEPT-NEW-GOAL", argv[0], (pointer(*)())ROSEUS_ACTION_ACCEPT_NEW_GOAL,
+  defun(ctx, "ACTION-ACCEPT-NEW-GOAL", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_ACCEPT_NEW_GOAL,
         "action-name uuid-string\n\nAccept new goal. Returns handle index.\n");
-  defun(ctx, "ACTION-PUBLISH-FEEDBACK", argv[0], (pointer(*)())ROSEUS_ACTION_PUBLISH_FEEDBACK,
+  defun(ctx, "ACTION-PUBLISH-FEEDBACK", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_PUBLISH_FEEDBACK,
         "action-name feedback-msg\n\nPublish feedback (server side).\n");
-  defun(ctx, "ACTION-PUBLISH-STATUS", argv[0], (pointer(*)())ROSEUS_ACTION_PUBLISH_STATUS,
+  defun(ctx, "ACTION-PUBLISH-STATUS", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_PUBLISH_STATUS,
         "action-name\n\nPublish status (server side).\n");
-  defun(ctx, "ACTION-SEND-RESULT-RESPONSE", argv[0], (pointer(*)())ROSEUS_ACTION_SEND_RESULT_RESPONSE,
+  defun(ctx, "ACTION-SEND-RESULT-RESPONSE", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_SEND_RESULT_RESPONSE,
         "action-name goal-uuid response\n\nSend result response (server side).\n");
-  defun(ctx, "ACTION-TAKE-CANCEL-REQUEST", argv[0], (pointer(*)())ROSEUS_ACTION_TAKE_CANCEL_REQUEST,
+  defun(ctx, "ACTION-TAKE-CANCEL-REQUEST", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_TAKE_CANCEL_REQUEST,
         "action-name request-instance\n\nTake cancel request (server side).\n");
-  defun(ctx, "ACTION-UPDATE-GOAL-STATE", argv[0], (pointer(*)())ROSEUS_ACTION_UPDATE_GOAL_STATE,
+  defun(ctx, "ACTION-UPDATE-GOAL-STATE", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_UPDATE_GOAL_STATE,
         "action-name handle-index goal-event\n\nUpdate goal state.\n");
-  defun(ctx, "ACTION-NOTIFY-GOAL-DONE", argv[0], (pointer(*)())ROSEUS_ACTION_NOTIFY_GOAL_DONE,
+  defun(ctx, "ACTION-NOTIFY-GOAL-DONE", argv[0], (eus_defun_fn_t)ROSEUS_ACTION_NOTIFY_GOAL_DONE,
         "action-name\n\nNotify that goal is done.\n");
 
   // Stubs for ROS 1 compatibility
-  defun(ctx, "GET-HOST", argv[0], (pointer(*)())ROSEUS_GET_HOST,
+  defun(ctx, "GET-HOST", argv[0], (eus_defun_fn_t)ROSEUS_GET_HOST,
         "Get the hostname where the master runs. (stub in ROS 2)");
-  defun(ctx, "GET-PORT", argv[0], (pointer(*)())ROSEUS_GET_PORT,
+  defun(ctx, "GET-PORT", argv[0], (eus_defun_fn_t)ROSEUS_GET_PORT,
         "Get the port where the master runs. (stub in ROS 2)");
-  defun(ctx, "GET-URI", argv[0], (pointer(*)())ROSEUS_GET_URI,
+  defun(ctx, "GET-URI", argv[0], (eus_defun_fn_t)ROSEUS_GET_URI,
         "Get the full URI to the master. (stub in ROS 2)");
 
   pointer_update(Spevalof(PACKAGE), p);
