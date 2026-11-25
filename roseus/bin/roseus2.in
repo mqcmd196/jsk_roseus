@@ -36,7 +36,7 @@ fi
 # Build EusLisp argument string
 # Add euslisp/ to *load-path* (roseus.so symlink lives there alongside roseus.l)
 ARG_STR=("(pushnew \"${ROSEUS_DIR}/euslisp/\" *load-path* :test #'equal)" \
-         ${ROSEUS_DIR}/euslisp/roseus.l)
+         ${ROSEUS_DIR}/euslisp/roseus.l ${ROSEUS_DIR}/euslisp/eustf.l)
 
 LAUNCH_PREFIX="exec"
 case $1 in

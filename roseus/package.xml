@@ -73,6 +73,8 @@
   <depend condition="$ROS_VERSION == 2">rosidl_typesupport_introspection_cpp</depend>
   <depend condition="$ROS_VERSION == 2">action_msgs</depend>
   <depend condition="$ROS_VERSION == 2">unique_identifier_msgs</depend>
+  <depend condition="$ROS_VERSION == 2">tf2</depend>
+  <depend condition="$ROS_VERSION == 2">tf2_geometry_msgs</depend>
 
   <exec_depend condition="$ROS_VERSION == 2">rosidl_default_runtime</exec_depend>
 

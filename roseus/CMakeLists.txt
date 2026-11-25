@@ -31,6 +31,16 @@ target_compile_options(roseus
   PRIVATE -O2 -DNDEBUG -DLinux -D_REENTRANT -DTHREADED -DPTHREAD -DX11R6_1 -Dx86_64 -Wno-comment -Wno-deprecated-declarations)
 target_include_directories(roseus PUBLIC ${euslisp_INCLUDE_DIRS})
 
+# eustf.so: tf for EusLisp on tf2_ros (euslisp/eustf.l is shared with ROS 1)
+ament_auto_add_library(eustf SHARED eustf2.cpp)
+set_target_properties(eustf PROPERTIES
+  PREFIX ""
+)
+list(REMOVE_ITEM ${PROJECT_NAME}_LIBRARIES eustf) # plugin for euslisp, not a library
+target_compile_options(eustf
+  PRIVATE -O2 -DNDEBUG -DLinux -D_REENTRANT -DTHREADED -DPTHREAD -DX11R6_1 -Dx86_64 -Wno-comment -Wno-deprecated-declarations)
+target_include_directories(eustf PUBLIC ${euslisp_INCLUDE_DIRS})
+
 # Generate ROS 2 interfaces from .msg/.srv files
 # Use ${PROJECT_NAME}_interfaces to avoid target name conflict with the roseus library
 # TestFixedArray/TestVariableArray are ROS 2 versions of FixedArray/VariableArray
@@ -95,6 +105,7 @@ if(BUILD_TESTING)
 
   # Smoke tests finish in well under 10 s; 20 s leaves room for DDS discovery.
   add_launch_test(test/talker-listener.test.py TIMEOUT 20)
+  add_launch_test(test/tf.test.py TIMEOUT 60)
   add_launch_test(test/add-two-ints-server.test.py TIMEOUT 20)
   add_launch_test(test/add-two-ints-server-groupname.test.py TIMEOUT 20)
   add_launch_test(test/service-callback.test.py TIMEOUT 20)
@@ -128,7 +139,7 @@ install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/bin/roseus
 
 # Install roseus.so in euslisp/ dir (EusLisp load-library expects "roseus.so" in same dir as roseus.l)
 install(
-  TARGETS roseus
+  TARGETS roseus eustf
   LIBRARY DESTINATION "share/${PROJECT_NAME}/euslisp"
 )
 
